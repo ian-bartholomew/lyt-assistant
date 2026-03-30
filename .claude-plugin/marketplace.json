@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "lyt-assistant",
-      "source": ".",
+      "source": "./",
       "description": "Comprehensive Claude Code plugin for managing an Obsidian vault using the Linking Your Thinking (LYT) note-taking system"
     }
   ]
