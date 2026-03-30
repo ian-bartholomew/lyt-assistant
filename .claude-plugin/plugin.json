@@ -1,0 +1,23 @@
+{
+  "name": "lyt-assistant",
+  "version": "0.1.0",
+  "description": "Comprehensive Claude Code plugin for managing an Obsidian vault using the Linking Your Thinking (LYT) note-taking system",
+  "author": {
+    "name": "Ian Bartholomew",
+    "email": "ian@ianbartholomew.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ian-bartholomew/lyt-assistant.git"
+  },
+  "homepage": "https://github.com/ian-bartholomew/lyt-assistant",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "lyt",
+    "linking-your-thinking",
+    "notes",
+    "knowledge-management",
+    "pkm"
+  ]
+}

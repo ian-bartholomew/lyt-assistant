@@ -1,0 +1,13 @@
+{
+  "name": "ian-bartholomew-lyt-assistant",
+  "owner": {
+    "name": "Ian Bartholomew"
+  },
+  "plugins": [
+    {
+      "name": "lyt-assistant",
+      "source": ".",
+      "description": "Comprehensive Claude Code plugin for managing an Obsidian vault using the Linking Your Thinking (LYT) note-taking system"
+    }
+  ]
+}

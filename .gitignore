@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Test outputs
+test-vault/
+*.log
+
+# Local settings
+*.local.md
+
+# IDE
+.vscode/
+.idea/
