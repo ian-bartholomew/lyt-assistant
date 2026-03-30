@@ -6,10 +6,7 @@
     "name": "Ian Bartholomew",
     "email": "ian@ianbartholomew.com"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ian-bartholomew/lyt-assistant.git"
-  },
+  "repository": "https://github.com/ian-bartholomew/lyt-assistant.git",
   "homepage": "https://github.com/ian-bartholomew/lyt-assistant",
   "license": "MIT",
   "keywords": [
