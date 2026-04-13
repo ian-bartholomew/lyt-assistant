@@ -1,7 +1,7 @@
 ---
 name: archive-project
 description: This skill should be used when the user asks to "archive a project", "complete a project", "finish a project", "close a project", or wants to move a completed project from 150 - Projects/ to 400 - Archive/Projects/. Handles status updates, knowledge extraction, MOC updates, and archival.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 

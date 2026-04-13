@@ -1,6 +1,6 @@
 {
   "name": "lyt-assistant",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Comprehensive Claude Code plugin for managing an Obsidian vault using the Linking Your Thinking (LYT) note-taking system",
   "author": {
     "name": "Ian Bartholomew",

@@ -1,7 +1,7 @@
 ---
 name: check-moc-health
 description: This skill should be used when the user asks to "check MOC health", "analyze MOC", "validate MOC", "check MOC quality", "audit MOC", "check for broken links in MOC", or wants to assess the quality and coverage of a Map of Content.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 

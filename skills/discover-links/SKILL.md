@@ -1,7 +1,7 @@
 ---
 name: discover-links
 description: This skill should be used when the user asks to "discover links", "find missing connections", "find missing links", "connect notes", "link discovery", or wants to identify relationships between existing notes that aren't currently linked.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
