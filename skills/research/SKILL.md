@@ -1,14 +1,16 @@
 ---
 name: research
 description: This skill should be used when the user asks to "research a topic", "research [topic]", "create reference note about [topic]", "look up [topic]", or wants to gather information about a subject and create a structured reference note with sources.
-version: 0.1.0
+version: 0.2.0
 argument-hint: <topic>
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, mcp__plugin_context7_context7__query-docs, AskUserQuestion]
+allowed-tools: [Bash, Edit, WebFetch, mcp__plugin_context7_context7__query-docs, AskUserQuestion]
 ---
 
 # Research Skill
 
 Research topics using web search or Context7 and create well-structured reference notes with proper source attribution, MOC links, and vault integration.
+
+For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
 
 ## Purpose
 
@@ -17,6 +19,7 @@ Accelerate learning by automating research for new topics. Gathers information f
 ## When to Use
 
 Invoke this skill when:
+
 - User explicitly runs `/research <topic>`
 - User asks to research, look up, or investigate a topic
 - User wants to create a reference note about something new
@@ -24,15 +27,44 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Parse topic** - Extract topic from arguments
-2. **Research strategy** - Choose web search or Context7
-3. **Gather information** - Fetch and synthesize content
-4. **Analyze and structure** - Create reference note outline
-5. **Suggest organization** - Destination, MOCs, links
-6. **Present interactively** - Review and edit
-7. **Create file** - Write with proper sources and links
+1. **Pre-flight check** - Verify Obsidian is running
+2. **Parse topic** - Extract topic from arguments
+3. **Check existing content** - See if topic already exists
+4. **Research strategy** - Choose web search or Context7
+5. **Gather information** - Fetch and synthesize content
+6. **Analyze and structure** - Create reference note outline
+7. **Suggest organization** - Destination, MOCs, links
+8. **Present interactively** - Review and edit
+9. **Create file** - Write with proper sources and links
+
+## Libraries
+
+This skill uses:
+
+- **lib/obsidian-operations.md** — All CLI-based vault operations
+- **lib/analysis.md** — Content classification, topic extraction, MOC matching
 
 ## Process Flow
+
+### Step 0: Pre-flight Check
+
+Before any vault operations, verify Obsidian is running:
+
+```bash
+obsidian vault
+```
+
+If this fails, present to the user:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
+Use **AskUserQuestion** to get their choice. Do not proceed until the pre-flight check passes.
 
 ### Step 1: Parse Topic Argument
 
@@ -57,7 +89,32 @@ Examples:
 - "Terraform state management"
 ```
 
-### Step 2: Determine Research Strategy
+### Step 2: Check for Existing Content
+
+Before researching, check if the topic already exists in the vault:
+
+```bash
+# Search for the topic
+obsidian search query="$TOPIC" limit=5
+```
+
+If matches found:
+
+```
+⚠️  Found existing notes about "$TOPIC":
+1. [file 1]
+2. [file 2]
+
+Options:
+A) Update existing note with new sources
+B) Create separate new version
+C) Review existing note first
+D) Cancel
+```
+
+Use **AskUserQuestion** to get their decision. If they choose A, read the existing note and plan to enhance it. If C, show them the content with `obsidian read file="..."` before continuing.
+
+### Step 3: Determine Research Strategy
 
 Choose appropriate research method:
 
@@ -72,15 +129,10 @@ Is topic a programming library/framework/API?
 
 **Decision tree:**
 
-```bash
-# Check if topic is tech/programming related
-if echo "$TOPIC" | grep -qi "react\|kubernetes\|terraform\|python\|javascript"; then
-  # Likely library/framework - use Context7
-  STRATEGY="context7"
-else
-  # General topic - use web search
-  STRATEGY="websearch"
-fi
+```
+Is the topic a specific programming library, framework, or API?
+  ├─ Yes (React, Kubernetes, Terraform, Python, etc.) → Use Context7
+  └─ No (general concept, SRE practice, theory) → Use web search
 ```
 
 **Always confirm with user:**
@@ -97,7 +149,7 @@ Or would you prefer:
 Proceed with web search? [Y/n]
 ```
 
-### Step 3: Gather Information
+### Step 4: Gather Information
 
 #### Strategy A: Web Search
 
@@ -167,11 +219,11 @@ Researching "React hooks"...
 📝 Synthesizing documentation...
 ```
 
-### Step 4: Synthesize and Structure Content
+### Step 5: Synthesize and Structure Content
 
 Create structured reference note from gathered information:
 
-#### 4a. Extract Key Information
+#### 5a. Extract Key Information
 
 From sources, extract:
 
@@ -182,7 +234,7 @@ From sources, extract:
 - **Use Cases:** When to use / when not to use
 - **Related Topics:** Connected concepts
 
-#### 4b. Create Note Outline
+#### 5b. Create Note Outline
 
 ```markdown
 # [Topic Title]
@@ -216,7 +268,7 @@ From sources, extract:
 [Source links]
 ```
 
-#### 4c. Write Synthesized Content
+#### 5c. Write Synthesized Content
 
 Generate clear, concise content:
 
@@ -232,7 +284,9 @@ performance analysis in distributed systems.
 ## Formula
 
 ```
+
 L = λW
+
 ```
 
 Where:
@@ -268,24 +322,25 @@ This tells us the system needs capacity for 50 concurrent connections.
 - https://dl.acm.org/doi/10.1145/...
 ```
 
-### Step 5: Analyze Topics and Suggest Organization
+### Step 6: Analyze Topics and Suggest Organization
 
-Use **lib/content-analyzer.md** to extract topics:
+Use **lib/analysis.md** to extract topics from the synthesized content. Identify:
 
-```bash
-TOPICS=$(extract_topics "$SYNTHESIZED_CONTENT")
-# Example: ["queueing theory", "performance", "capacity planning"]
-```
+1. **Technical terms:** Capitalized acronyms (SLO, SRE), hyphenated terms (error-budget)
+2. **Domain terms:** Compound phrases (service level objective, capacity planning)
+3. **Heading terms:** Words from H2/H3 headings
 
-#### 5a. Suggest Destination Folder
+Example extracted topics: `["queueing theory", "performance", "capacity planning"]`
+
+#### 6a. Suggest Destination Folder
 
 Match topics to existing Reference subfolders:
 
 ```bash
 # Get Reference structure
-REF_STRUCTURE=$(find "300 - Reference" -type d)
+obsidian folders folder="300 - Reference"
 
-# Match topics to folders
+# Match topics to folder names
 # "queueing theory" + "performance" → "300 - Reference/SRE-Concepts/"
 # "terraform" → "300 - Reference/terraform/"
 ```
@@ -303,31 +358,52 @@ Available alternatives:
 - 300 - Reference/Laws-and-Principles/
 ```
 
-#### 5b. Suggest MOCs
+If no good match exists:
 
-Use **lib/moc-matcher.md**:
+```
+Topics don't match existing folders well.
+
+Options:
+A) Create new folder: "300 - Reference/[new-topic]/"
+B) Place in closest match: "300 - Reference/SRE-Concepts/"
+C) Specify custom location
+```
+
+#### 6b. Suggest MOCs
+
+Use **lib/analysis.md** MOC matching algorithm:
 
 ```bash
-# Match topics to MOCs
-MOCS=$(find_relevant_mocs "$TOPICS")
+# 1. Get all MOCs
+obsidian files folder="100 - MOCs" ext=md
+
+# 2. For each MOC, calculate score:
+#    - Read MOC content: obsidian read file="MOC Name"
+#    - Count keyword matches (weight 2x)
+#    - Get MOC links: obsidian links file="MOC Name"
+#    - Count link overlaps (weight 1x)
+#    - Check title match (weight 3x)
+
+# 3. Return top 2-3 with confidence
 ```
 
 **Present suggestions:**
 
 ```
 🗺️  Suggested MOCs:
-  - [[Laws & Principles MOC]] (high confidence)
-  - [[SRE Concepts MOC]] (medium confidence)
+  - [[Laws & Principles MOC]] (high confidence) — title match, 3 keyword matches
+  - [[SRE Concepts MOC]] (medium confidence) — 1 keyword match
 ```
 
-#### 5c. Find Related Notes
+#### 6c. Find Related Notes
 
 Search vault for related content:
 
 ```bash
-# Search for related terms
+# Search for each topic term
 for term in $TOPICS; do
-  grep -rl "$term" "200 - Notes" "300 - Reference" --include="*.md"
+  obsidian search query="$term" path="200 - Notes" limit=3
+  obsidian search query="$term" path="300 - Reference" limit=3
 done
 ```
 
@@ -339,7 +415,7 @@ done
   - [[Capacity Planning]] (related practice)
 ```
 
-### Step 6: Present Complete Summary Interactively
+### Step 7: Present Complete Summary Interactively
 
 Show preview:
 
@@ -359,8 +435,8 @@ Little's Law relates queue length, arrival rate, and wait time...
    300 - Reference/SRE-Concepts/Little's Law.md
 
 🗺️  Suggested MOCs:
-  - [[Laws & Principles MOC]]
-  - [[SRE Concepts MOC]]
+  - [[Laws & Principles MOC]] (high confidence)
+  - [[SRE Concepts MOC]] (medium confidence)
 
 🔗 Additional Links:
   - [[Latency, throughput, goodput]]
@@ -376,7 +452,7 @@ F) Show full content preview
 G) Cancel
 ```
 
-### Step 7: Handle User Editing
+### Step 8: Handle User Editing
 
 #### Option B: Edit Location
 
@@ -417,14 +493,28 @@ Edit directly? [Y/n]
 Or provide feedback and I'll revise.
 ```
 
-### Step 8: Create File with Proper Attribution
+### Step 9: Create File with Proper Attribution
 
-Once approved, create file:
+Once approved, create the file:
 
-```markdown
+```bash
+# 1. Create file with content
+obsidian create path="300 - Reference/SRE-Concepts/Little's Law.md" content="# Little's Law\n\n[Synthesized content]\n\n## Related\n\n- [[Latency, throughput, goodput]]\n- [[Capacity Planning]]" silent
+
+# 2. Set all properties
+obsidian property:set name="tags" value="queueing-theory,performance,capacity-planning" type=list file="Little's Law"
+obsidian property:set name="created" value="2026-04-13" type=date file="Little's Law"
+obsidian property:set name="type" value="external" file="Little's Law"
+obsidian property:set name="sources" value="https://en.wikipedia.org/wiki/Little%27s_law,https://dl.acm.org/doi/10.1145/...,https://sre.google/workbook/..." type=list file="Little's Law"
+obsidian property:set name="mocs" value="[[Laws & Principles MOC]],[[SRE Concepts MOC]]" type=list file="Little's Law"
+```
+
+The resulting file will have:
+
+```yaml
 ---
 tags: [queueing-theory, performance, capacity-planning]
-created: 2026-03-26
+created: 2026-04-13
 type: external
 sources:
   - https://en.wikipedia.org/wiki/Little%27s_law
@@ -445,9 +535,7 @@ mocs:
 - [[Capacity Planning]]
 ```
 
-Use **Write** tool to create file.
-
-### Step 9: Report Success
+### Step 10: Report Success
 
 ```
 ✅ Research Complete!
@@ -485,6 +573,7 @@ Prioritize authoritative sources:
 5. **Books** (O'Reilly, Packt, etc.)
 
 Avoid:
+
 - Random blog posts
 - Forums/Reddit (unless verified)
 - Outdated content (>5 years for tech)
@@ -493,6 +582,7 @@ Avoid:
 ### Content Synthesis
 
 **DO:**
+
 - Synthesize information in clear, concise language
 - Include practical examples
 - Cite sources in frontmatter
@@ -500,6 +590,7 @@ Avoid:
 - Connect to related topics
 
 **DON'T:**
+
 - Copy/paste large blocks (copyright)
 - Include marketing fluff
 - Add opinion without labeling
@@ -509,6 +600,7 @@ Avoid:
 ### Attribution
 
 Always include:
+
 - `sources:` in frontmatter (URLs)
 - Reference section with links
 - `type: external` for external content
@@ -578,6 +670,18 @@ Choose destination?
 
 ## Error Handling
 
+### Obsidian Not Running
+
+If `obsidian vault` fails:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
 ### Network/Fetch Failure
 
 ```
@@ -610,6 +714,24 @@ Please provide specific topic:
 - Bad: "stuff", "things", "that"
 ```
 
+### File Creation Failure
+
+If `obsidian create` fails:
+
+```
+❌ Failed to create file: [error message]
+
+This could mean:
+- File already exists (use overwrite option)
+- Invalid path or filename
+- Obsidian vault is not accessible
+
+Options:
+A) Retry with different name/path
+B) Show me the content so I can create manually
+C) Cancel
+```
+
 ## Best Practices
 
 1. **Be specific** - Clear topic names get better results
@@ -623,22 +745,15 @@ Please provide specific topic:
 9. **Use Context7 for tech** - Better than web for docs
 10. **Follow up** - Add personal insights later
 
-## Integration with Utilities
-
-This skill uses shared utilities:
-
-- **lib/content-analyzer.md** - Extract topics, suggest folder
-- **lib/moc-matcher.md** - Suggest relevant MOCs
-- **lib/vault-scanner.md** - Find related notes
-- **lib/frontmatter.md** - Create proper attribution
-- **lib/link-parser.md** - Add links
-
 ## Usage Examples
 
 ### Example 1: General Topic Research
 
 ```
 User: /research Little's Law
+
+Pre-flight check...
+✅ Obsidian vault active
 
 Researching "Little's Law"...
 
@@ -659,6 +774,9 @@ Create? [Y]
 ```
 User: /research React hooks
 
+Pre-flight check...
+✅ Obsidian vault active
+
 Researching "React hooks"...
 
 📚 Using Context7 (library detected)
@@ -677,16 +795,22 @@ Create? [Y]
 ```
 User: /research Circuit Breaker
 
-⚠️  "Circuit Breaker.md" already exists
+Pre-flight check...
+✅ Obsidian vault active
+
+⚠️  Found existing note: "Circuit Breaker.md"
 
 Options:
 D) Review existing note
 
-[Shows existing note]
+[Shows existing content via obsidian read]
 
 Note has basic info. Add new sources? [Y]
 
-✅ Updated with 2 new sources
+🔍 Gathering new sources...
+✅ Found 2 additional authoritative sources
+
+Updated frontmatter with new sources.
 ```
 
 ## Related Skills
@@ -696,4 +820,4 @@ Note has basic info. Add new sources? [Y]
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources, synthesizing structured reference notes with proper attribution, and integrating seamlessly into the vault with appropriate MOC links and related connections.
+The research skill automates topic research by fetching information from authoritative sources, synthesizing structured reference notes with proper attribution, and integrating seamlessly into the vault with appropriate MOC links and related connections using Obsidian CLI commands.

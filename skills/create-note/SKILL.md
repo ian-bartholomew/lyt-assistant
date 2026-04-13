@@ -1,8 +1,8 @@
 ---
 name: create-note
 description: This skill should be used when the user asks to "create a note", "create new note", "make a note", "write a note", "add a note", or wants guided note creation assistance. Provides interactive note creation with proper structure, classification, and linking.
-version: 0.1.0
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
+version: 0.2.0
+allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
 # Create Note Skill
@@ -13,9 +13,12 @@ Guided creation of properly structured Notes or Reference files with appropriate
 
 Help create new notes with correct structure, classification, linking, and organization following LYT principles. Distinguishes between Notes (personal insights) and Reference (external information), suggests appropriate titles, and establishes connections to existing vault content.
 
+For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+
 ## When to Use
 
 Invoke this skill when:
+
 - User explicitly runs `/create-note`
 - User asks to create, write, or add a new note
 - User mentions making a new file for the vault
@@ -23,15 +26,53 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Determine source** - Existing content or start from scratch
-2. **Analyze content** - Classify type and extract topics
-3. **Suggest structure** - Title, destination, links
-4. **Review and edit** - Interactive refinement
-5. **Create file** - Write with proper frontmatter and links
+1. **Validate vault** - Pre-flight check and LYT structure validation
+2. **Determine source** - Existing content or start from scratch
+3. **Analyze content** - Classify type and extract topics
+4. **Suggest structure** - Title, destination, links
+5. **Review and edit** - Interactive refinement
+6. **Create file** - Write with proper frontmatter and links
 
 ## Process Flow
 
-### Step 1: Determine Content Source
+### Step 1: Pre-flight Check and Validate
+
+Before any vault operation, verify Obsidian is running:
+
+```bash
+obsidian vault
+```
+
+If this fails, present to the user:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
+Use **AskUserQuestion** to get their choice.
+
+Once Obsidian is confirmed running, validate LYT vault structure:
+
+```bash
+obsidian folders
+```
+
+Verify output contains all required LYT folders: `000 - Inbox`, `100 - MOCs`, `150 - Projects`, `200 - Notes`, `300 - Reference`, `400 - Archive`.
+
+If any are missing:
+
+```
+⚠️  Missing LYT directories: [list missing folders]
+This doesn't appear to be a complete LYT vault.
+```
+
+Exit if critical folders are missing.
+
+### Step 2: Determine Content Source
 
 Ask user about starting point:
 
@@ -48,23 +89,44 @@ Handle each option:
 
 #### Option A: Content in Inbox
 
-```bash
-# Scan inbox
-INBOX_FILES=$(find "000 - Inbox" -type f -name "*.md")
+List inbox files:
 
-# Present list
-echo "Select a file from inbox:"
-for i in $(seq 1 $(echo "$INBOX_FILES" | wc -l)); do
-  FILE=$(echo "$INBOX_FILES" | sed -n "${i}p")
-  echo "$i) $(basename "$FILE")"
-done
+```bash
+obsidian files folder="000 - Inbox" ext=md
 ```
 
-Read selected file for analysis.
+Present list to user:
+
+```
+Select a file from inbox:
+1) random thoughts on circuit breakers.md
+2) error budget notes.md
+3) terraform state docs.md
+```
+
+Use **AskUserQuestion** to get selection, then read selected file:
+
+```bash
+obsidian read file="[selected file name]"
+```
+
+Proceed to analysis.
 
 #### Option B: Content Elsewhere
 
-Ask for file path and read content.
+Ask for file path and read content:
+
+```bash
+obsidian read file="[user-provided file name]"
+```
+
+If file not found, try searching:
+
+```bash
+obsidian search query="[partial file name]" limit=5
+```
+
+Proceed to analysis.
 
 #### Option C: Start from Scratch
 
@@ -79,9 +141,44 @@ Examples:
 - "Kubernetes service mesh patterns"
 ```
 
-### Step 2: Analyze Content
+Use **AskUserQuestion** to get topic, then suggest template based on likely type (Note vs Reference).
 
-Use **lib/content-analyzer.md** instructions:
+### Step 3: Analyze Content
+
+Use **lib/analysis.md** instructions for classification:
+
+**Read file content:**
+
+```bash
+obsidian read file="Note Name"
+```
+
+**Classify as Note, Reference, or Project** based on:
+
+- First-person language, assertion titles → Note
+- External quotes, code blocks, source attribution → Reference
+- Action items, deadlines, deliverables → Project
+
+**Extract topics and themes** from content and headings:
+
+```bash
+obsidian outline file="Note Name" format=md
+```
+
+**Assess atomicity:**
+
+```bash
+obsidian wordcount file="Note Name" words
+obsidian outline file="Note Name" total
+```
+
+- Under 500 words: Good for a Note
+- Over 500 words: May be Reference or needs splitting
+- More than 4 headings: May cover multiple topics
+
+**Determine confidence level** (High/Medium/Low).
+
+**Output format:**
 
 ```
 Analyzing content...
@@ -89,18 +186,22 @@ Analyzing content...
 📄 Content Analysis:
 - Type: Note (personal insight)
 - Topics: circuit breakers, reliability, fault tolerance
-- Atomicity: Single concept
+- Word count: 287
+- Atomicity: Single concept (3 sections)
 - Confidence: High
 - Reasoning: First-person synthesis, assertion-style
 ```
 
-### Step 3: Suggest Title
+If project detected, suggest using `/create-project` for proper hub creation.
+
+### Step 4: Suggest Title
 
 For **Notes** (200 - Notes/):
 
 Suggest assertion-style title following pattern: `[Subject] [verb] [outcome]`
 
 Examples:
+
 - "Circuit breakers prevent cascading failures"
 - "Error budgets enable feature velocity"
 - "Bulkhead pattern isolates component failures"
@@ -108,6 +209,7 @@ Examples:
 For **References** (300 - Reference/):
 
 Suggest descriptive title:
+
 - "Terraform State Management Guide"
 - "Kubernetes Service Mesh Comparison"
 - "PostgreSQL Performance Tuning"
@@ -124,11 +226,14 @@ B) Edit title
 C) Keep original
 ```
 
-### Step 4: Suggest Destination
+Use **AskUserQuestion** to get their choice.
+
+### Step 5: Suggest Destination
 
 Based on classification:
 
 **For Notes:**
+
 ```
 📁 Suggested Destination:
    200 - Notes/Circuit breakers prevent cascading failures.md
@@ -136,7 +241,13 @@ Based on classification:
 
 **For References:**
 
-Use **lib/content-analyzer.md** to match topics to Reference subfolders:
+Use **lib/analysis.md** to match topics to Reference subfolders:
+
+```bash
+obsidian folders folder="300 - Reference"
+```
+
+Compare extracted topics against folder names. Present suggestion:
 
 ```
 📁 Suggested Destination:
@@ -147,35 +258,86 @@ Available alternatives:
 - 300 - Reference/Tools/
 ```
 
-### Step 5: Suggest MOC Links
+If no good match exists:
 
-Use **lib/moc-matcher.md** instructions:
+```
+Topics [new-topic] don't match existing folders.
+
+Options:
+A) Create new folder: "300 - Reference/new-topic/"
+B) Place in closest match: "300 - Reference/SRE-Concepts/"
+C) Specify custom location
+```
+
+### Step 6: Suggest MOC Links
+
+Use **lib/analysis.md** instructions for MOC matching:
+
+**Get all MOCs:**
+
+```bash
+obsidian files folder="100 - MOCs" ext=md
+```
+
+**For each MOC, calculate score:**
+
+- **Keyword match (weight: 2x):** Read MOC content and count topic overlaps
+- **Link overlap (weight: 1x):** Get MOC links and count overlaps with content topics
+- **Title match (weight: 3x):** Check if MOC title contains any content topic
+
+**Assign confidence:**
+
+- **High (score >= 5):** Multiple keyword matches, clear thematic fit
+- **Medium (score 2-4):** Some matches, related but not primary
+- **Low (score 1):** Weak connection
+
+**Present suggestions:**
 
 ```
 🗺️  Suggested MOCs:
-  - [[Reliability Patterns MOC]] (high confidence)
-  - [[SRE Concepts MOC]] (medium confidence)
+  - [[Reliability Patterns MOC]] (high confidence) — 3 keyword matches, title match
+  - [[SRE Concepts MOC]] (medium confidence) — 1 keyword match, parent MOC
+```
 
+**Check for new MOC opportunity:**
+
+```bash
+obsidian search query="reliability patterns" total
+```
+
+If count >= 3 and no MOC covers this topic:
+
+```
 💡 Create new MOC?
    "Reliability Patterns MOC" doesn't exist but would fit 3+ existing notes
    Create it? [Y/n]
 ```
 
-### Step 6: Suggest Related Links
+### Step 7: Suggest Related Links
 
-Search vault for related content:
+Search vault for related content using extracted topics:
+
+**For each topic, search vault:**
 
 ```bash
-# Extract topics
-TOPICS=$(extract_topics "$CONTENT")
-
-# Find related notes
-for topic in $TOPICS; do
-  grep -rl "$topic" "200 - Notes" "300 - Reference" --include="*.md"
-done
+obsidian search query="[topic]" path="200 - Notes" limit=5
+obsidian search query="[topic]" path="300 - Reference" limit=5
 ```
 
-Present suggestions:
+**Check relevance** by reading files and counting topic frequency.
+
+**Filter suggestions:**
+
+- Skip if only one passing mention
+- Check link counts to avoid over-linking:
+
+  ```bash
+  obsidian links file="Note" total
+  ```
+
+  If > 15, only show high-confidence suggestions.
+
+**Present suggestions:**
 
 ```
 🔗 Suggested Related Links:
@@ -184,7 +346,7 @@ Present suggestions:
   - [[Exponential Backoff]]
 ```
 
-### Step 7: Interactive Review
+### Step 8: Interactive Review
 
 Present complete suggestion:
 
@@ -206,16 +368,40 @@ E) Edit related links
 F) Cancel
 ```
 
-### Step 8: Create File
+Use **AskUserQuestion** to get their choice. Allow iterative refinement for options B-E.
 
-Once approved, create file with proper structure:
+### Step 9: Create File
 
-#### For Notes (200 - Notes/):
+Once approved, create file with proper structure using **lib/obsidian-operations.md** instructions:
+
+#### For Notes (200 - Notes/)
+
+**Create file:**
+
+```bash
+obsidian create path="200 - Notes/[title].md" content="# [title]\n\n[User's content or placeholder]" silent
+```
+
+**Set properties:**
+
+```bash
+obsidian property:set name="tags" value="[tag1],[tag2],[tag3]" type=list file="[title]"
+obsidian property:set name="created" value="2026-04-13" type=date file="[title]"
+obsidian property:set name="mocs" value="[[Reliability Patterns MOC]],[[SRE Concepts MOC]]" type=list file="[title]"
+```
+
+**Add Related section:**
+
+```bash
+obsidian append file="[title]" content="\n## Related\n\n- [[Bulkhead Pattern]]\n- [[Graceful Degradation]]\n- [[Exponential Backoff]]"
+```
+
+**Example final structure:**
 
 ```markdown
 ---
 tags: [circuit-breaker, reliability, fault-tolerance]
-created: 2026-03-26
+created: 2026-04-13
 mocs:
   - [[Reliability Patterns MOC]]
   - [[SRE Concepts MOC]]
@@ -232,12 +418,36 @@ mocs:
 - [[Exponential Backoff]]
 ```
 
-#### For References (300 - Reference/):
+#### For References (300 - Reference/)
+
+**Create file:**
+
+```bash
+obsidian create path="300 - Reference/[subfolder]/[title].md" content="# [title]\n\n[User's content or placeholder]" silent
+```
+
+**Set properties:**
+
+```bash
+obsidian property:set name="tags" value="[tag1],[tag2]" type=list file="[title]"
+obsidian property:set name="created" value="2026-04-13" type=date file="[title]"
+obsidian property:set name="type" value="external" file="[title]"
+obsidian property:set name="source" value="[URL or book if known]" file="[title]"
+obsidian property:set name="mocs" value="[[Reliability Patterns MOC]]" type=list file="[title]"
+```
+
+**Add Related section:**
+
+```bash
+obsidian append file="[title]" content="\n## Related\n\n- [[Bulkhead Pattern]]\n- [[Retry Patterns]]"
+```
+
+**Example final structure:**
 
 ```markdown
 ---
 tags: [circuit-breaker, pattern]
-created: 2026-03-26
+created: 2026-04-13
 type: external
 source: [URL or book if known]
 mocs:
@@ -254,9 +464,7 @@ mocs:
 - [[Retry Patterns]]
 ```
 
-Use Write tool to create file.
-
-### Step 9: Report Success
+### Step 10: Report Success
 
 ```
 ✅ Created: 200 - Notes/Circuit breakers prevent cascading failures.md
@@ -270,11 +478,18 @@ Next steps:
 - Update MOCs with new note
 ```
 
+Verify file creation:
+
+```bash
+obsidian file file="[title]"
+```
+
 ## Content Analysis Details
 
 ### Determining Note vs Reference
 
 **Note indicators:**
+
 - First-person language
 - Personal insights
 - Assertion-style claim
@@ -282,6 +497,7 @@ Next steps:
 - Your voice throughout
 
 **Reference indicators:**
+
 - External quotes
 - Code examples
 - Commands/configuration
@@ -301,21 +517,28 @@ Help me decide:
 3. Do you reference this for lookup, or is it an insight?
 ```
 
+Use **AskUserQuestion** to get clarification.
+
 ### Atomicity Check
 
 Ensure note covers single concept:
 
-```bash
-# Count main sections
-SECTIONS=$(grep -c "^## " "content.md")
+**Count sections:**
 
-if [ $SECTIONS -gt 4 ]; then
-  echo "⚠️  Multiple topics detected ($SECTIONS sections)"
-  echo "Consider splitting into separate notes:"
-  echo "- Note 1: [First topic]"
-  echo "- Note 2: [Second topic]"
-fi
+```bash
+obsidian outline file="Note" total
 ```
+
+If more than 4 headings:
+
+```
+⚠️  Multiple topics detected ([count] sections)
+Consider splitting into separate notes:
+- Note 1: [First topic]
+- Note 2: [Second topic]
+```
+
+Use **AskUserQuestion** to confirm split or proceed as-is.
 
 ### Title Generation
 
@@ -399,9 +622,17 @@ B) Use as-is with frontmatter only
 C) Manually structure (I'll guide you)
 ```
 
+Use **AskUserQuestion** to get their choice.
+
 ### Empty or Minimal Content
 
 If content is very brief:
+
+```bash
+obsidian wordcount file="Note" words
+```
+
+If under 50 words:
 
 ```
 ℹ️  Content is brief (47 words)
@@ -413,9 +644,19 @@ This could work as:
 Create now or expand first?
 ```
 
+Use **AskUserQuestion** to confirm.
+
 ## Error Handling
 
 ### File Already Exists
+
+Check if file exists before creating:
+
+```bash
+obsidian file file="[title]"
+```
+
+If file info is returned (file exists):
 
 ```
 ⚠️  File already exists: "200 - Notes/Circuit breakers prevent cascading failures.md"
@@ -427,7 +668,17 @@ C) Overwrite (dangerous!)
 D) Open existing for editing
 ```
 
+Use **AskUserQuestion** to get their choice.
+
 ### Invalid Destination
+
+If creating at a subfolder that might not exist:
+
+```bash
+obsidian folders folder="300 - Reference"
+```
+
+Verify the target subfolder exists in the list. If not:
 
 ```
 ❌ Destination doesn't exist: "300 - Reference/New-Category/"
@@ -438,7 +689,21 @@ B) Choose existing directory
 C) Cancel
 ```
 
+For option A, create a file in the new folder (Obsidian CLI creates intermediate folders automatically):
+
+```bash
+obsidian create path="300 - Reference/New-Category/.gitkeep" content="" silent
+```
+
 ### MOC Doesn't Exist
+
+Verify MOC exists:
+
+```bash
+obsidian file file="[MOC name]"
+```
+
+If not found:
 
 ```
 ⚠️  MOC doesn't exist: "Reliability Patterns MOC"
@@ -448,6 +713,8 @@ A) Create MOC now
 B) Skip this MOC
 C) Choose different MOC
 ```
+
+Use **AskUserQuestion** to get their choice.
 
 ### No Content Provided
 
@@ -459,6 +726,8 @@ You can fill in the content later in Obsidian.
 
 Proceed?
 ```
+
+Use **AskUserQuestion** to confirm.
 
 ## Best Practices
 
@@ -477,11 +746,8 @@ Proceed?
 
 This skill uses shared utilities:
 
-- **lib/content-analyzer.md** - Classify type, extract topics, suggest title
-- **lib/moc-matcher.md** - Suggest relevant MOCs
-- **lib/vault-scanner.md** - Find related content
-- **lib/link-parser.md** - Add links properly
-- **lib/frontmatter.md** - Create proper metadata
+- **lib/obsidian-operations.md** - All vault operations (read, create, search, properties)
+- **lib/analysis.md** - Classify type, extract topics, suggest title, match MOCs
 
 ## Usage Examples
 
