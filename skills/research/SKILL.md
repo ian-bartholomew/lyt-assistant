@@ -1,7 +1,7 @@
 ---
 name: research
 description: This skill should be used when the user asks to "research a topic", "research [topic]", "create reference note about [topic]", "look up [topic]", or wants to gather information about a subject and create a structured reference note with sources.
-version: 0.2.0
+version: 1.0.0
 argument-hint: <topic>
 allowed-tools: [Bash, Edit, WebFetch, mcp__plugin_context7_context7__query-docs, AskUserQuestion]
 ---

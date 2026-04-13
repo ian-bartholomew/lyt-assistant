@@ -1,7 +1,7 @@
 ---
 name: create-note
 description: This skill should be used when the user asks to "create a note", "create new note", "make a note", "write a note", "add a note", or wants guided note creation assistance. Provides interactive note creation with proper structure, classification, and linking.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 

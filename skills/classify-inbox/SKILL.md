@@ -1,7 +1,7 @@
 ---
 name: classify-inbox
 description: This skill should be used when the user asks to "process inbox", "classify inbox", "organize inbox files", "move files from inbox", or wants to process items in the "000 - Inbox" folder. Provides interactive classification of inbox files with intelligent destination suggestions and link recommendations.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 

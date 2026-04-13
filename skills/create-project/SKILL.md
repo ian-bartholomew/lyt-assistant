@@ -1,7 +1,7 @@
 ---
 name: create-project
 description: This skill should be used when the user asks to "create a project", "new project", "start a project", "add a project", or wants to set up a new project hub note in the 150 - Projects/ folder. Provides guided project creation with proper frontmatter, structure, and MOC linking.
-version: 0.2.0
+version: 1.0.0
 allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
