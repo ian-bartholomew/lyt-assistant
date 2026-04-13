@@ -1,13 +1,15 @@
 ---
 name: check-moc-health
 description: This skill should be used when the user asks to "check MOC health", "analyze MOC", "validate MOC", "check MOC quality", "audit MOC", "check for broken links in MOC", or wants to assess the quality and coverage of a Map of Content.
-version: 0.1.0
-allowed-tools: [Read, Edit, Grep, Glob, AskUserQuestion]
+version: 0.2.0
+allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
 # Check MOC Health Skill
 
 Analyze MOC (Map of Content) quality and suggest improvements by checking structure, detecting broken links, finding missing coverage, and identifying stale references.
+
+For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
 
 ## Purpose
 
@@ -16,6 +18,7 @@ Maintain MOC quality by performing comprehensive audits that check link validity
 ## When to Use
 
 Invoke this skill when:
+
 - User explicitly runs `/check-moc-health`
 - User mentions checking, analyzing, auditing, or validating a MOC
 - User wants to find broken links in a MOC
@@ -25,33 +28,45 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Select MOC** - Choose which MOC to analyze
-2. **Structure audit** - Check formatting and organization
-3. **Link validation** - Find broken links
-4. **Coverage analysis** - Find orphaned notes
-5. **Staleness detection** - Identify outdated references
-6. **Present report** - Interactive findings and options
-7. **Execute fixes** - Apply approved improvements
+1. **Pre-flight check** - Verify Obsidian CLI connection
+2. **Select MOC** - Choose which MOC to analyze
+3. **Structure audit** - Check formatting and organization
+4. **Link validation** - Find broken links
+5. **Coverage analysis** - Find orphaned notes
+6. **Staleness detection** - Identify outdated references
+7. **Present report** - Interactive findings and options
+8. **Execute fixes** - Apply approved improvements
 
 ## Process Flow
 
-### Step 1: Select MOC to Analyze
+### Step 0: Pre-flight Check
 
-Present list of available MOCs:
+Verify Obsidian CLI connection before proceeding:
 
 ```bash
-# Get all MOCs using vault-scanner
-MOC_FILES=$(find "100 - MOCs" -type f -name "*.md" | sort)
+obsidian vault
+```
 
-echo "Which MOC should I analyze?"
-echo ""
-i=1
-for moc in $MOC_FILES; do
-  echo "$i) $(basename "$moc" .md)"
-  i=$((i + 1))
-done
-echo ""
-echo "Enter number or MOC name:"
+If this fails, inform the user that the Obsidian CLI is not available and exit gracefully.
+
+### Step 1: Select MOC to Analyze
+
+Get all MOCs using Obsidian CLI:
+
+```bash
+obsidian files folder="100 - MOCs" ext=md
+```
+
+Present list to user:
+
+```
+Which MOC should I analyze?
+
+1) SRE Concepts MOC
+2) Incident Management MOC
+3) Observability MOC
+
+Enter number or MOC name:
 ```
 
 **Alternative:** Accept MOC name as argument:
@@ -62,40 +77,39 @@ echo "Enter number or MOC name:"
 
 ### Step 2: Read and Parse MOC
 
-Read MOC file:
+Read MOC file using Obsidian CLI:
 
 ```bash
-MOC_PATH="100 - MOCs/${MOC_NAME}.md"
-MOC_CONTENT=$(cat "$MOC_PATH")
+obsidian read file="SRE Concepts MOC"
 ```
 
 Extract components:
-- Frontmatter
-- Headings (structure)
-- Links (all [[target]] links)
+
+- Frontmatter (properties)
+- Headings (structure via `obsidian outline`)
+- Links (all [[target]] links via `obsidian links`)
 - Sections (organize by heading)
 
 ### Step 3: Structure Audit
 
-Check MOC structure and formatting:
+Check MOC structure and formatting using Obsidian CLI:
 
 #### 3a. Heading Hierarchy
 
-Verify proper heading levels:
+Get heading structure:
 
 ```bash
-# Should have clear hierarchy: #, ##, ###
-HEADINGS=$(grep '^#' "$MOC_PATH")
-
-# Check for skipped levels (e.g., # → ###)
-# Check for too many H1s (should be 1)
-H1_COUNT=$(grep -c '^# ' "$MOC_PATH")
-if [ $H1_COUNT -gt 1 ]; then
-  echo "⚠️  Multiple H1 headings found (should be 1)"
-fi
+obsidian outline file="SRE Concepts MOC"
 ```
 
+Verify proper heading levels:
+
+- Should have clear hierarchy: #, ##, ###
+- Check for skipped levels (e.g., # → ###)
+- Count H1 headings (should be 1)
+
 **Good structure:**
+
 ```markdown
 # SRE Concepts MOC
 
@@ -109,6 +123,7 @@ fi
 ```
 
 **Bad structure:**
+
 ```markdown
 # SRE Concepts MOC
 ### Reliability  # Skipped H2
@@ -117,14 +132,10 @@ fi
 
 #### 3b. Section Organization
 
-Check if links are organized by section:
-
-```bash
-# MOC should group related topics
-# Not just a flat list of links
-```
+Check if links are organized by section using the outline structure.
 
 **Good:**
+
 ```markdown
 ## Service Level Objectives
 
@@ -139,6 +150,7 @@ Check if links are organized by section:
 ```
 
 **Bad (flat list):**
+
 ```markdown
 # SRE Concepts MOC
 
@@ -150,15 +162,13 @@ Check if links are organized by section:
 
 #### 3c. Link Formatting
 
-Check all links are properly formatted:
+Read the file content and check for malformed links using the Read tool:
 
-```bash
-# Find malformed links
-grep -n '\[.*\]([^)]*)' "$MOC_PATH"  # Markdown links (not wiki-style)
-grep -n '\[\[[^]]*$' "$MOC_PATH"     # Unclosed links
-```
+- Markdown links (should be wiki-style [[links]])
+- Unclosed links
 
 **Report:**
+
 ```
 📊 Structure Audit:
 ✅ Has clear heading hierarchy
@@ -168,21 +178,20 @@ grep -n '\[\[[^]]*$' "$MOC_PATH"     # Unclosed links
 
 ### Step 4: Link Validation (Broken Links)
 
-Check each link target exists:
+Check each link target exists using Obsidian CLI:
 
 ```bash
-# Extract all links
-LINKS=$(grep -o '\[\[[^]]*\]\]' "$MOC_PATH" | sed 's/\[\[\([^|]*\).*/\1/')
+# Get all links from the MOC
+obsidian links file="SRE Concepts MOC"
 
-# For each link, verify target exists
-for link in $LINKS; do
-  if ! find . -name "${link}.md" 2>/dev/null | grep -q .; then
-    echo "⚠️  Broken link: [[${link}]] (file doesn't exist)"
-  fi
-done
+# For each link target, verify it exists
+obsidian file file="Target Note Name"
 ```
 
+Use `obsidian unresolved` to get vault-wide unresolved links, then filter for those in the MOC.
+
 **Report:**
+
 ```
 📊 Link Validation:
 Total links: 34
@@ -199,44 +208,49 @@ These references don't exist in vault.
 
 ### Step 5: Coverage Analysis (Missing Notes)
 
-Find notes that should be in MOC but aren't:
+Find notes that should be in MOC but aren't using the analysis library.
 
 #### 5a. Identify MOC Topics
 
-Extract topics from MOC title and sections:
+Use `lib/analysis.md` functions:
+
+- Extract topics from MOC title and sections
+- Use heading extraction to identify themes
 
 ```bash
-MOC_NAME="SRE Concepts MOC"
-TOPICS="sre reliability observability incidents"
-
-# Extract from section headings
-SECTIONS=$(grep '^##' "$MOC_PATH" | sed 's/^## //')
-# "Reliability Patterns" → add "reliability", "patterns"
+# Get section headings
+obsidian outline file="SRE Concepts MOC"
 ```
+
+Extract keywords: "SRE", "reliability", "observability", "incidents"
 
 #### 5b. Find Related Orphans
 
-Search vault for notes matching MOC topics but not linked from MOC:
+Use `lib/analysis.md` matching functions:
+
+1. Get all links currently in the MOC:
 
 ```bash
-# Get all MOC links
-MOC_LINKS=$(grep -o '\[\[[^]]*\]\]' "$MOC_PATH" | sed 's/\[\[\([^|]*\).*/\1/')
-
-# Find notes mentioning MOC topics
-for topic in $TOPICS; do
-  CANDIDATES=$(grep -rl "$topic" "200 - Notes" "300 - Reference" --include="*.md")
-
-  # Filter: not already in MOC links
-  for candidate in $CANDIDATES; do
-    BASENAME=$(basename "$candidate" .md)
-    if ! echo "$MOC_LINKS" | grep -q "$BASENAME"; then
-      echo "Missing: $candidate (mentions $topic)"
-    fi
-  done
-done
+obsidian links file="SRE Concepts MOC"
 ```
 
+1. Search for notes matching MOC topics:
+
+```bash
+obsidian search query="reliability" path="200 - Notes"
+obsidian search query="sre" path="300 - Reference"
+```
+
+1. Get orphaned notes:
+
+```bash
+obsidian orphans
+```
+
+1. Cross-reference: find notes that match topics but aren't linked from MOC
+
 **Report:**
+
 ```
 📦 Coverage Analysis:
 Missing from MOC but should be included (8 notes):
@@ -258,35 +272,34 @@ Check for links to archived or outdated content:
 
 #### 6a. Archived References
 
+Check if any MOC links point to Archive:
+
 ```bash
-# Check if any MOC links point to Archive
-for link in $MOC_LINKS; do
-  if find "400 - Archive" -name "${link}.md" | grep -q .; then
-    echo "⚠️  Links to archived content: [[${link}]]"
-  fi
-done
+# For each link target, check its location
+obsidian file file="Target Note"
+# Check if path contains "400 - Archive"
+```
+
+Or search for archived content:
+
+```bash
+obsidian search query="term" path="400 - Archive"
 ```
 
 #### 6b. Old Content
 
-Check last modified dates:
+Check last modified dates using `obsidian file`:
 
 ```bash
-# Find files not updated in >1 year
-for link in $MOC_LINKS; do
-  FILE=$(find . -name "${link}.md")
-  if [ -f "$FILE" ]; then
-    MTIME=$(stat -f%m "$FILE")  # macOS
-    AGE=$(( ($(date +%s) - $MTIME) / 86400 ))  # days
-
-    if [ $AGE -gt 365 ]; then
-      echo "ℹ️  Old content (${AGE} days): [[${link}]]"
-    fi
-  fi
-done
+# For each link target
+obsidian file file="Target Note"
+# Examine the modified date in the output
 ```
 
+Calculate age and flag notes not updated in >365 days.
+
 **Report:**
+
 ```
 🕰️  Staleness Detection:
 ✅ No archived references
@@ -338,56 +351,60 @@ Handle user selection:
 
 #### Option A: Create Missing Notes
 
-For each broken link, create stub file:
+For each broken link, create stub file using Obsidian CLI:
 
 ```bash
-for link in $BROKEN_LINKS; do
-  echo "---
-tags: []
-created: $(date +%Y-%m-%d)
-mocs:
-  - [[${MOC_NAME}]]
----
+obsidian create file="Bulkhead Pattern" path="200 - Notes"
 
-# ${link}
+# Set properties
+obsidian property:set file="Bulkhead Pattern" property=created value="2026-04-13"
+obsidian property:set file="Bulkhead Pattern" property=tags value="[]"
+obsidian property:set file="Bulkhead Pattern" property=mocs value="[[SRE Concepts MOC]]"
+```
+
+Then use Edit tool to add initial content:
+
+```markdown
+# Bulkhead Pattern
 
 [Content to be added]
 
 ## Related
 
-- [[${MOC_NAME}]]
-" > "200 - Notes/${link}.md"
-
-  echo "✅ Created: 200 - Notes/${link}.md"
-done
+- [[SRE Concepts MOC]]
 ```
 
 #### Option B: Add Missing References
 
-Add orphaned notes to MOC:
+Add orphaned notes to MOC using Edit tool:
 
 ```bash
-# Determine appropriate section
-SECTION="## Related Notes"  # or existing section
+# Read the MOC
+obsidian read file="SRE Concepts MOC"
+```
 
-# Add links
-for note in $MISSING_NOTES; do
-  # Add to MOC
-  sed -i '' "/${SECTION}/a\\
-- [[$(basename "$note" .md)]]\\
-" "$MOC_PATH"
+Use Edit tool to add links in appropriate sections:
 
-  echo "✅ Added [[$(basename "$note" .md)]] to MOC"
-done
+```markdown
+## Related Notes
+
+- [[Exponential Backoff]]
+- [[Load Shedding]]
 ```
 
 #### Option C: Generate Detailed Report
 
-Create markdown report file:
+Create markdown report file using Obsidian CLI:
+
+```bash
+obsidian create file="MOC Health Report - SRE Concepts MOC - 2026-04-13" path="000 - Inbox"
+```
+
+Then use Edit tool to populate:
 
 ```markdown
 # MOC Health Report: SRE Concepts MOC
-**Date:** 2026-03-26
+**Date:** 2026-04-13
 
 ## Summary
 - Total links: 34
@@ -403,36 +420,33 @@ Create markdown report file:
 [... detailed report ...]
 ```
 
-Save to `000 - Inbox/MOC-Health-Report-${DATE}.md`
-
 #### Option D: Fix Broken Links
 
-Remove or comment out broken links:
+Remove broken links using Edit tool:
 
 ```bash
-for link in $BROKEN_LINKS; do
-  # Remove the link line
-  sed -i '' "/\[\[${link}\]\]/d" "$MOC_PATH"
-done
+# Read the MOC
+obsidian read file="SRE Concepts MOC"
 ```
 
-Or comment them:
+Use Edit tool to remove or comment out broken link lines:
 
-```bash
+```markdown
 # - [[Bulkhead Pattern]]  # TODO: Create this note
 ```
 
 #### Option E: Fix All Automatically
 
 Comprehensive auto-fix:
-1. Create stub files for broken links
-2. Add high-confidence orphans to MOC
-3. Comment out stale references
-4. Generate report
+
+1. Create stub files for broken links (Option A)
+2. Add high-confidence orphans to MOC (Option B)
+3. Comment out stale references (Edit tool)
+4. Generate report (Option C)
 
 #### Option F: Review Individually
 
-Walk through each issue:
+Walk through each issue with AskUserQuestion:
 
 ```
 Issue 1 of 13:
@@ -532,12 +546,17 @@ Available MOCs:
 Choose from list? [Y/n]
 ```
 
-### Read Permission Error
+### Obsidian CLI Connection Error
 
 ```
-❌ Cannot read MOC file (permission denied)
+❌ Cannot connect to Obsidian CLI
 
-File may be locked by Obsidian. Close it and retry? [Y/n]
+Please ensure:
+1. Obsidian is running
+2. Local REST API plugin is enabled
+3. API token is configured
+
+Try again? [Y/n]
 ```
 
 ### Too Many Issues
@@ -564,14 +583,12 @@ C) Generate report for manual review
 9. **Link to sub-MOCs** - When appropriate
 10. **Document in report** - Keep records of changes
 
-## Integration with Utilities
+## Integration with Libraries
 
-This skill uses shared utilities:
+This skill uses shared libraries:
 
-- **lib/vault-scanner.md** - Get MOC list and vault index
-- **lib/link-parser.md** - Validate and add links
-- **lib/content-analyzer.md** - Match topics for coverage
-- **lib/moc-matcher.md** - Find related orphans
+- **lib/obsidian-operations.md** - All CLI-based vault operations
+- **lib/analysis.md** - Content classification, topic extraction, MOC matching
 
 ## Usage Examples
 
@@ -628,4 +645,4 @@ Add these to MOC? [Y/n]
 
 ## Summary
 
-The check-moc-health skill performs comprehensive MOC audits by validating structure, checking links, finding missing coverage, and detecting stale references. Provides interactive fixing with detailed reporting.
+The check-moc-health skill performs comprehensive MOC audits by validating structure, checking links, finding missing coverage, and detecting stale references. Provides interactive fixing with detailed reporting. Uses Obsidian CLI for all vault operations.

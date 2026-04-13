@@ -1,8 +1,8 @@
 ---
 name: classify-inbox
 description: This skill should be used when the user asks to "process inbox", "classify inbox", "organize inbox files", "move files from inbox", or wants to process items in the "000 - Inbox" folder. Provides interactive classification of inbox files with intelligent destination suggestions and link recommendations.
-version: 0.1.0
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
+version: 0.2.0
+allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
 # Classify Inbox Skill
@@ -12,6 +12,8 @@ Process inbox files interactively with intelligent classification, destination s
 ## Purpose
 
 Reduce friction in processing inbox items by analyzing each file, determining its type (Note vs Reference), suggesting destination folders, identifying relevant MOCs, and recommending related note links. Present suggestions interactively for user review and editing before execution.
+
+For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
 
 ## When to Use
 
@@ -24,38 +26,78 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Scan vault** - Build index of MOCs, notes, references
-2. **List inbox files** - Find all markdown files in `000 - Inbox/`
-3. **Process each file** - Analyze, suggest, present, execute
-4. **Report completion** - Summary of moves and links added
+1. **Validate vault** - Pre-flight check and LYT structure validation
+2. **Scan vault** - Build index of MOCs, notes, references
+3. **List inbox files** - Find all markdown files in `000 - Inbox/`
+4. **Process each file** - Analyze, suggest, present, execute
+5. **Report completion** - Summary of moves and links added
 
 ## Process Flow
 
-### Step 1: Initialize and Validate
+### Step 1: Pre-flight Check and Validate
 
-Check vault structure exists:
+Before any vault operation, verify Obsidian is running:
 
 ```bash
-if [ ! -d "000 - Inbox" ]; then
-  echo "⚠️  Inbox directory not found"
-  echo "This doesn't appear to be an LYT vault"
-  exit 1
-fi
-
-if [ ! -d "100 - MOCs" ] || [ ! -d "150 - Projects" ] || [ ! -d "200 - Notes" ] || [ ! -d "300 - Reference" ]; then
-  echo "⚠️  Missing LYT directories (MOCs, Projects, Notes, or Reference)"
-  exit 1
-fi
+obsidian vault
 ```
+
+If this fails, present to the user:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
+Use **AskUserQuestion** to get their choice.
+
+Once Obsidian is confirmed running, validate LYT vault structure:
+
+```bash
+obsidian folders
+```
+
+Verify output contains all required LYT folders: `000 - Inbox`, `100 - MOCs`, `150 - Projects`, `200 - Notes`, `300 - Reference`, `400 - Archive`.
+
+If any are missing:
+
+```
+⚠️  Missing LYT directories: [list missing folders]
+This doesn't appear to be a complete LYT vault.
+```
+
+Exit if critical folders are missing.
 
 ### Step 2: Scan Vault
 
-Build complete vault index using **lib/vault-scanner.md** instructions:
+Build complete vault index using **lib/obsidian-operations.md** and **lib/analysis.md** instructions:
 
-- Get all inbox files
-- Get all MOC files with their links
-- Get Reference folder structure
-- Get existing notes for related content matching
+**Get inbox files:**
+
+```bash
+obsidian files folder="000 - Inbox" ext=md
+```
+
+**Get all MOC files:**
+
+```bash
+obsidian files folder="100 - MOCs" ext=md
+```
+
+**Get Reference folder structure:**
+
+```bash
+obsidian folders folder="300 - Reference"
+```
+
+**Get existing notes:**
+
+```bash
+obsidian files folder="200 - Notes" ext=md
+```
 
 Store index for reuse throughout processing.
 
@@ -65,14 +107,40 @@ For each file in inbox:
 
 #### 3a. Read and Analyze Content
 
-Use **lib/content-analyzer.md** instructions:
+Use **lib/analysis.md** instructions:
 
-- Read file content
-- Classify as Note, Reference, or Project
-- Extract topics and themes
-- Assess atomicity
-- Suggest title if needed
-- Determine confidence level
+**Read file content:**
+
+```bash
+obsidian read file="Inbox Note"
+```
+
+**Classify as Note, Reference, or Project** based on:
+
+- First-person language, assertion titles → Note
+- External quotes, code blocks, source attribution → Reference
+- Action items, deadlines, deliverables → Project
+
+**Extract topics and themes** from content and headings:
+
+```bash
+obsidian outline file="Inbox Note" format=md
+```
+
+**Assess atomicity:**
+
+```bash
+obsidian wordcount file="Inbox Note" words
+obsidian outline file="Inbox Note" total
+```
+
+- Under 500 words: Good for a Note
+- Over 500 words: May be Reference or needs splitting
+- More than 4 headings: May cover multiple topics
+
+**Suggest title if needed** (assertion-style for Notes).
+
+**Determine confidence level** (High/Medium/Low).
 
 **Output format:**
 
@@ -105,6 +173,12 @@ Based on classification:
 **If Reference (300 - Reference/):**
 
 - Use topics to match against existing Reference subfolders
+- Get folder list:
+
+  ```bash
+  obsidian folders folder="300 - Reference"
+  ```
+
 - Suggest best-fit subfolder (e.g., `300 - Reference/SRE-Concepts/`)
 - If no good match, list options or suggest creating new subfolder
 
@@ -117,12 +191,34 @@ Based on classification:
 
 #### 3c. Suggest MOC Links
 
-Use **lib/moc-matcher.md** instructions:
+Use **lib/analysis.md** instructions:
 
-- Extract topics from content
-- Score all MOCs by relevance
-- Return top 2-3 matches with confidence levels
-- Check if new MOC should be created
+**Get all MOCs:**
+
+```bash
+obsidian files folder="100 - MOCs" ext=md
+```
+
+**For each MOC, calculate relevance score:**
+
+- Read MOC content and check keyword matches
+- Get MOC links and check overlap with content topics:
+
+  ```bash
+  obsidian links file="MOC Name"
+  ```
+
+- Check if MOC title matches content topics
+
+**Return top 2-3 matches** with confidence levels (High/Medium/Low).
+
+**Check if new MOC should be created:**
+
+```bash
+obsidian search query="topic term" total
+```
+
+If 3+ notes share a topic not covered by existing MOCs, suggest creation.
 
 **Output format:**
 
@@ -134,22 +230,28 @@ Use **lib/moc-matcher.md** instructions:
 
 #### 3d. Suggest Related Note Links
 
-Search vault for related content:
+Search vault for related content by extracting key terms and searching:
 
 ```bash
-# Extract key terms from content
-TERMS=$(extract_topics "$CONTENT")
+obsidian search query="term" path="200 - Notes"
+obsidian search query="term" path="300 - Reference"
+```
 
-# Search for files mentioning same terms
-for term in $TERMS; do
-  grep -rl "$term" "200 - Notes" "300 - Reference" --include="*.md"
-done
+Get search context for relevance scoring:
+
+```bash
+obsidian search:context query="term" format=json
 ```
 
 Filter and rank:
 
 - Exclude current file
-- Exclude already-linked files
+- Get existing links to exclude already-linked files:
+
+  ```bash
+  obsidian links file="Inbox Note"
+  ```
+
 - Rank by topic overlap
 - Return top 2-3 suggestions
 
@@ -163,7 +265,7 @@ Filter and rank:
 
 #### 3e. Check for New MOC Opportunity
 
-Using **lib/moc-matcher.md** logic:
+Using **lib/analysis.md** logic:
 
 If 3+ notes share topic not covered by existing MOCs:
 
@@ -193,6 +295,13 @@ Handle each choice:
 Execute the suggested moves and link additions.
 
 #### Option B: Edit Destination
+
+```bash
+# Get available Reference folders
+obsidian folders folder="300 - Reference"
+```
+
+Present to user:
 
 ```
 Current suggestion: 300 - Reference/SRE-Concepts/
@@ -239,38 +348,47 @@ For each approved file:
 
 #### 5a. Move File
 
-Use Bash tool:
+Use **lib/obsidian-operations.md**:
 
 ```bash
-DEST="300 - Reference/SRE-Concepts/"
-FILE="000 - Inbox/Error Budget Calculations.md"
+# Move to destination
+obsidian move file="Error Budget Calculations" to="300 - Reference/SRE-Concepts/"
+```
 
-# Check destination exists
-if [ ! -d "$DEST" ]; then
-  mkdir -p "$DEST"
-fi
+Verify the move:
 
-# Check for conflicts
-if [ -f "${DEST}/$(basename "$FILE")" ]; then
-  # Handle conflict (see Error Handling section)
-fi
+```bash
+obsidian file file="Error Budget Calculations"
+```
 
-# Move file
-mv "$FILE" "$DEST"
+Handle conflicts: If the file already exists at destination, present options:
+
+```
+⚠️  File "Error Budget.md" already exists at destination
+
+Options:
+A) Rename new file to "Error Budget (2).md"
+B) Merge with existing file (manual)
+C) Skip this file
+D) Overwrite existing (dangerous!)
 ```
 
 #### 5b. Add MOC Links
 
-Use **lib/link-parser.md** instructions:
+Use **lib/obsidian-operations.md** for frontmatter operations:
 
-- Add MOC links to frontmatter `mocs:` field
-- If frontmatter doesn't exist, create it
-- Use **lib/frontmatter.md** for frontmatter operations
+Add MOC links to `mocs:` property:
+
+```bash
+obsidian property:set name="mocs" value="[[SLOs MOC]],[[SRE Concepts MOC]]" type=list file="Error Budget Calculations"
+```
+
+This creates frontmatter if it doesn't exist:
 
 ```markdown
 ---
 tags: [sre, reliability]
-created: 2026-03-26
+created: 2026-04-13
 mocs:
   - [[SLOs MOC]]
   - [[SRE Concepts MOC]]
@@ -279,29 +397,27 @@ mocs:
 
 #### 5c. Add Related Links
 
-Add to "## Related" section:
+Add to `## Related` section using append:
 
-- If section exists, append
-- If not, create at end of file
-- Use **lib/link-parser.md** for link insertion
-
-```markdown
-## Related
-
-- [[Implementing Service Level Objectives-Hidalgo]]
-- [[SLO Calculations]]
+```bash
+obsidian append file="Error Budget Calculations" content="\n## Related\n\n- [[Implementing Service Level Objectives-Hidalgo]]\n- [[SLO Calculations]]"
 ```
+
+**If section exists**, read file first and use **Edit** tool to append to existing section rather than creating a duplicate.
 
 #### 5d. Update Frontmatter Metadata
 
-Add or update fields:
+Add or update fields using **lib/obsidian-operations.md**:
 
-```yaml
----
-tags: [error-budget, slo, reliability]
-created: 2026-03-26
-type: external  # for Reference files
----
+```bash
+# Add tags
+obsidian property:set name="tags" value="error-budget,slo,reliability" type=list file="Error Budget Calculations"
+
+# Set created date
+obsidian property:set name="created" value="2026-04-13" type=date file="Error Budget Calculations"
+
+# For Reference files, add type
+obsidian property:set name="type" value="external" file="Error Budget Calculations"
 ```
 
 ### Step 6: Verify and Report
@@ -335,11 +451,19 @@ MOCs updated: 3
 
 ### Empty Inbox
 
+```bash
+obsidian files folder="000 - Inbox" ext=md total
+```
+
+If count is 0:
+
 ```
 ✅ Inbox is clean! No files to process.
 ```
 
 ### File Conflict at Destination
+
+If move fails due to existing file:
 
 ```
 ⚠️  File "Error Budget.md" already exists at destination
@@ -352,6 +476,8 @@ D) Overwrite existing (dangerous!)
 ```
 
 ### Ambiguous Classification
+
+If **lib/analysis.md** returns Low confidence:
 
 ```
 📄 Content Analysis:
@@ -368,6 +494,14 @@ Use **AskUserQuestion** to clarify.
 
 ### Broken Links During Addition
 
+Before adding a link, verify target exists:
+
+```bash
+obsidian file file="Target Note"
+```
+
+If not found:
+
 ```
 ⚠️  Cannot add link [[Non-existent Note]]
 Target file doesn't exist in vault
@@ -380,6 +514,8 @@ C) Edit link target
 
 ### Permission Error
 
+If Obsidian CLI command fails with permission error:
+
 ```
 ❌ Cannot write to "file.md"
 File may be locked by Obsidian
@@ -387,20 +523,21 @@ File may be locked by Obsidian
 Close the file and retry?
 ```
 
-### Invalid Destination
+### Obsidian Not Running
+
+If pre-flight check fails:
 
 ```
-⚠️  Destination "invalid/path/" doesn't exist
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
 
 Options:
-A) Create directory
-B) Choose different destination
-C) Skip this file
+A) Open Obsidian and retry
+B) Cancel
 ```
 
 ## Best Practices
 
-1. **Scan vault once** at start, reuse index
+1. **Run pre-flight check** before any operation
 2. **Process files sequentially** for user control
 3. **Always validate paths** before moving
 4. **Check for duplicates** before adding links
@@ -413,13 +550,10 @@ C) Skip this file
 
 ## Integration with Utilities
 
-This skill uses all shared utilities:
+This skill uses shared utilities:
 
-- **lib/vault-scanner.md** - Initial vault scan and indexing
-- **lib/content-analyzer.md** - Classify Note vs Reference, extract topics
-- **lib/moc-matcher.md** - Suggest relevant MOCs
-- **lib/link-parser.md** - Add and validate links
-- **lib/frontmatter.md** - Update metadata
+- **lib/obsidian-operations.md** - All vault operations via Obsidian CLI
+- **lib/analysis.md** - Classification, topic extraction, MOC matching
 
 ## Usage Examples
 
@@ -503,4 +637,4 @@ Skipped: 1 file
 
 ## Summary
 
-The classify-inbox skill provides intelligent, interactive inbox processing by analyzing content, suggesting destinations and links, and executing approved actions. Uses all shared utilities for consistent vault operations.
+The classify-inbox skill provides intelligent, interactive inbox processing by analyzing content, suggesting destinations and links, and executing approved actions. Uses shared utilities (**lib/obsidian-operations.md**, **lib/analysis.md**) for consistent vault operations via Obsidian CLI.

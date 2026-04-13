@@ -1,13 +1,15 @@
 ---
 name: create-project
 description: This skill should be used when the user asks to "create a project", "new project", "start a project", "add a project", or wants to set up a new project hub note in the 150 - Projects/ folder. Provides guided project creation with proper frontmatter, structure, and MOC linking.
-version: 0.1.0
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
+version: 0.2.0
+allowed-tools: [Bash, Edit, AskUserQuestion]
 ---
 
 # Create Project Skill
 
 Guided creation of a project hub note in `150 - Projects/` with proper frontmatter, structure, success criteria, and MOC associations.
+
+For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
 
 ## Purpose
 
@@ -24,16 +26,42 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Gather project details** - Name, goal, due date, area
-2. **Suggest MOC links** - Match to existing MOCs
-3. **Define success criteria** - Interactive checklist building
-4. **Identify first actions** - Next steps to get started
-5. **Create project file** - Write with proper frontmatter and structure
-6. **Update Projects MOC** - Add project to the active list
+1. **Pre-flight check** - Verify Obsidian is running
+2. **Gather project details** - Name, goal, due date, area
+3. **Suggest MOC links** - Match to existing MOCs
+4. **Define success criteria** - Interactive checklist building
+5. **Identify first actions** - Next steps to get started
+6. **Create project file** - Write with proper frontmatter and structure
+7. **Update Projects MOC** - Add project to the active list
+
+## Libraries
+
+- **lib/obsidian-operations.md** - All CLI-based vault operations
+- **lib/analysis.md** - Content classification, topic extraction, MOC matching
 
 ## Process Flow
 
-### Step 1: Gather Project Details
+### Step 1: Pre-flight Check
+
+Before any vault operations, verify Obsidian is running:
+
+```bash
+obsidian vault
+```
+
+If this fails, present to the user:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
+Use **AskUserQuestion** to get their choice. Do not proceed until the pre-flight check passes.
+
+### Step 2: Gather Project Details
 
 Ask user for core project information:
 
@@ -55,21 +83,33 @@ What area does this relate to? (e.g., Infrastructure, SRE, Professional Developm
 
 Use **AskUserQuestion** tool for each prompt.
 
-### Step 2: Suggest MOC Links
+### Step 3: Suggest MOC Links
 
 Scan existing MOCs and suggest relevant ones based on the area and goal:
 
 ```bash
 # List all MOCs
-find "100 - MOCs" -name "*.md" -not -name "Home.md" -not -name "Projects MOC.md"
+obsidian files folder="100 - MOCs" ext=md
 ```
+
+Read relevant MOCs to analyze content:
+
+```bash
+obsidian read file="MOC Name"
+```
+
+Use **lib/analysis.md** MOC matching algorithm to calculate confidence scores based on:
+
+- Keyword matches (weight: 2x)
+- Title matches (weight: 3x)
+- Link overlap (weight: 1x)
 
 Present suggestions:
 
 ```
 Suggested MOCs for this project:
-  - [[Infrastructure & Architecture MOC]] (high confidence)
-  - [[SRE Concepts MOC]] (medium confidence)
+  - [[Infrastructure & Architecture MOC]] (high confidence) — keyword match
+  - [[SRE Concepts MOC]] (medium confidence) — related topic
 
 Would you like to:
 A) Accept these MOCs
@@ -77,7 +117,7 @@ B) Edit MOC list
 C) Skip MOC linking
 ```
 
-### Step 3: Define Success Criteria
+### Step 4: Define Success Criteria
 
 Guide the user through defining what "done" looks like:
 
@@ -98,7 +138,7 @@ Consider adding:
 - [ ] Lessons learned captured
 ```
 
-### Step 4: Identify Next Actions
+### Step 5: Identify Next Actions
 
 Ask for immediate next steps:
 
@@ -109,65 +149,39 @@ What are the first 1-3 actions to get this started?
 
 The first action becomes the `next_action` frontmatter field.
 
-### Step 5: Create Project File
+### Step 6: Create Project File
 
-Write the project hub note to `150 - Projects/`:
-
-```markdown
----
-type: project
-status: active
-area: [area from Step 1]
-due_date: [date from Step 1]
-next_action: [first action from Step 4]
-tags: [auto-generated from goal and area]
-lyt_related_mocs:
-  - "[[MOC 1]]"
-  - "[[MOC 2]]"
-created: [today's date]
----
-
-# [Project Name]
-
-## Goal
-
-[Goal from Step 1]
-
-## Success Criteria
-
-- [ ] [Criteria from Step 3]
-- [ ] [Criteria from Step 3]
-
-## Next Actions
-
-- [ ] [Actions from Step 4]
-- [ ] [Actions from Step 4]
-
-## Log
-
-- [today's date] - Project created
-
-## Notes
-
-
-
-## Resources
-<!-- Links to relevant Notes (200) and Reference (300) files -->
-
-
-## Lessons Learned
-<!-- Populated on completion -->
-```
-
-Use the Write tool to create the file.
-
-### Step 6: Update Projects MOC
-
-Read the current Projects MOC and add the new project under the appropriate status section:
+Create the project hub note in `150 - Projects/`:
 
 ```bash
-# Read current Projects MOC
-cat "100 - MOCs/Projects MOC.md"
+# Create file with initial content
+obsidian create path="150 - Projects/[Project-Name].md" content="# [Project Name]\n\n## Goal\n\n[Goal from Step 2]\n\n## Success Criteria\n\n[Criteria from Step 4]\n\n## Next Actions\n\n[Actions from Step 5]\n\n## Log\n\n- 2026-04-13 - Project created\n\n## Notes\n\n\n\n## Resources\n<!-- Links to relevant Notes (200) and Reference (300) files -->\n\n\n## Lessons Learned\n<!-- Populated on completion -->" silent
+```
+
+Set all frontmatter properties:
+
+```bash
+obsidian property:set name="type" value="project" file="[Project-Name]"
+obsidian property:set name="status" value="active" file="[Project-Name]"
+obsidian property:set name="area" value="[area from Step 2]" file="[Project-Name]"
+obsidian property:set name="due_date" value="[date from Step 2]" type=date file="[Project-Name]"
+obsidian property:set name="next_action" value="[first action from Step 5]" file="[Project-Name]"
+obsidian property:set name="tags" value="[auto-generated from goal and area]" type=list file="[Project-Name]"
+obsidian property:set name="created" value="2026-04-13" type=date file="[Project-Name]"
+```
+
+If MOCs were selected in Step 3, set the lyt_related_mocs property:
+
+```bash
+obsidian property:set name="lyt_related_mocs" value="[[MOC 1]],[[MOC 2]]" type=list file="[Project-Name]"
+```
+
+### Step 7: Update Projects MOC
+
+Read the current Projects MOC:
+
+```bash
+obsidian read file="Projects MOC"
 ```
 
 Use the Edit tool to add the new project to the `## Active` section:
@@ -176,7 +190,9 @@ Use the Edit tool to add the new project to the `## Active` section:
 - [[Project-Name]] — due YYYY-MM-DD — [next_action]
 ```
 
-### Step 7: Report Success
+If the Projects MOC doesn't have an Active section, use Edit tool to add it following the Projects MOC template structure.
+
+### Step 8: Report Success
 
 ```
 Project created successfully!
@@ -244,7 +260,27 @@ created: YYYY-MM-DD
 
 ## Error Handling
 
+### Obsidian Not Running
+
+If pre-flight check fails:
+
+```
+Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
+
+Options:
+A) Open Obsidian and retry
+B) Cancel
+```
+
 ### File Already Exists
+
+Check before creating:
+
+```bash
+obsidian file file="[Project-Name]"
+```
+
+If the file exists:
 
 ```
   File "150 - Projects/[Name].md" already exists
@@ -255,17 +291,9 @@ B) Open existing project
 C) Cancel
 ```
 
-### Missing 150 - Projects/ Directory
-
-```bash
-mkdir -p "150 - Projects"
-```
-
-Create the directory silently and continue.
-
 ### No Due Date Provided
 
-Set `due_date: ""` in frontmatter and note it in the output:
+If user leaves due date blank, omit the `due_date` property and note it in the output:
 
 ```
   No due date set. You can add one later in the frontmatter.
@@ -273,7 +301,18 @@ Set `due_date: ""` in frontmatter and note it in the output:
 
 ### Projects MOC Not Found
 
-Create it from the template defined in the system, then add the project.
+If `obsidian read file="Projects MOC"` fails, the Projects MOC doesn't exist. Create it using the canonical template:
+
+```bash
+obsidian create path="100 - MOCs/Projects MOC.md" content="# Projects MOC\n\n## Active\n\n- [[Project-Name]] — due YYYY-MM-DD — [next_action]\n\n## Blocked\n\n\n## On Hold\n\n\n## Complete\n\n" silent
+```
+
+Then set properties:
+
+```bash
+obsidian property:set name="type" value="moc" file="Projects MOC"
+obsidian property:set name="created" value="2026-04-13" type=date file="Projects MOC"
+```
 
 ## Special Cases
 
@@ -285,10 +324,19 @@ If user provides all details in one message (e.g., "create a project called X fo
 
 If user references an inbox item:
 
-1. Read the inbox file
-2. Extract goal and context
+1. Read the inbox file:
+
+   ```bash
+   obsidian read file="Inbox-Item-Name"
+   ```
+
+2. Extract goal and context from content
 3. Pre-fill project details
-4. Offer to move/delete the inbox item after creation
+4. Offer to move/delete the inbox item after creation:
+
+   ```bash
+   obsidian delete file="Inbox-Item-Name"
+   ```
 
 ## Best Practices
 
@@ -299,14 +347,7 @@ If user references an inbox item:
 5. **Link to MOCs** - Keeps projects connected to the knowledge graph
 6. **Start the log** - First entry is always "Project created"
 7. **Update Projects MOC** - Always keep the index current
-
-## Integration with Utilities
-
-This skill uses shared utilities:
-
-- **lib/moc-matcher.md** - Suggest relevant MOCs
-- **lib/frontmatter.md** - Create proper metadata
-- **lib/vault-scanner.md** - Check for existing projects and related content
+8. **Use CLI for all operations** - No direct shell commands (`mkdir`, `cat`, `find`)
 
 ## Related Skills
 
@@ -317,4 +358,4 @@ This skill uses shared utilities:
 
 ## Summary
 
-The create-project skill provides guided project hub creation with proper structure, status tracking, MOC linking, and Projects MOC updates following LYT principles. Ensures new projects are properly integrated into the vault from creation.
+The create-project skill provides guided project hub creation with proper structure, status tracking, MOC linking, and Projects MOC updates following LYT principles. Uses Obsidian CLI for all vault operations. Ensures new projects are properly integrated into the vault from creation.
