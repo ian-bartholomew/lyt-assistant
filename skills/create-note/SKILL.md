@@ -400,20 +400,24 @@ Add the new article under the matching type heading (Concepts, Guides, Company, 
 Append an entry to `wiki/_log.md`:
 
 ```markdown
-- 2026-04-17 - Created [[circuit-breaker-pattern]] (concept) in wiki/concepts/
+## [2026-04-17] create | Circuit Breaker Pattern
+
+- Destination: `wiki/concepts/circuit-breaker-pattern.md`
+- Domain: sre, resilience
+- Maturity: draft
+- Source: from scratch / from raw/clippings/article.md
 ```
 
 If `wiki/_log.md` does not exist, create it:
 
 ```markdown
----
-title: Wiki Compile Log
-type: log
----
+# Wiki Activity Log
 
-# Wiki Compile Log
+## [2026-04-17] create | Circuit Breaker Pattern
 
-- 2026-04-17 - Created [[circuit-breaker-pattern]] (concept) in wiki/concepts/
+- Destination: `wiki/concepts/circuit-breaker-pattern.md`
+- Domain: sre, resilience
+- Maturity: draft
 ```
 
 ### Step 11: Report Success
@@ -553,9 +557,9 @@ Proceed?
 
 ## Related Skills
 
-- **/classify-inbox** - Process raw/ files into wiki articles
+- **/ingest** - Process raw/ files into wiki articles
 - **/research** - Research and create reference articles
-- **/check-moc-health** - Verify indexes after adding articles
+- **/lint** - Verify indexes after adding articles
 
 ## Summary
 
