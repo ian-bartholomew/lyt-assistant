@@ -1,47 +1,61 @@
 # Analysis Library
 
-This utility provides instructions for content classification, topic extraction, MOC matching, and thematic grouping. Uses Obsidian CLI (via **lib/obsidian-operations.md**) for all vault queries.
+This utility provides instructions for content classification, topic extraction, domain index matching, and thematic grouping. Uses Obsidian CLI (via **lib/obsidian-operations.md**) for all vault queries.
 
-## Note vs Reference Classification
+## Wiki Article Classification
 
-The fundamental distinction in LYT:
+Content is classified into one of four types based on what question it answers:
 
-- **Notes (200 - Notes/)**: Ideas you've internalized, your own synthesis and insights
-- **Reference (300 - Reference/)**: Things you look up, external information and documentation
+| Type | Question it answers | Destination | Examples |
+|------|---------------------|-------------|---------|
+| concept | What is X? | wiki/concepts/ | Patterns, principles, definitions |
+| guide | How do I X? | wiki/guides/ | Runbooks, tutorials, procedures |
+| company | How does our org do X? | wiki/company/ | Internal systems, team processes |
+| learning | What did I learn from X? | wiki/learning/ | Post-mortems, course notes |
 
-### Heuristic Rules
+### Classification Heuristics
 
-**Strong Note indicators:**
+**Concept indicators:**
 
-1. **First-person language:** "I think...", "In my experience...", "I've learned...", "My understanding is..."
-2. **Assertion-style title:** "Circuit breakers prevent cascading failures", "Error budgets decouple reliability from velocity"
-3. **Personal synthesis:** Connections between concepts, opinion, interpretation, lessons learned
-4. **Short and focused:** Single clear idea (atomic), few paragraphs
-5. **No external quotes:** Written entirely in the author's voice
+1. **Defines or explains something:** "X is...", "X means...", "X works by..."
+2. **Assertion-style or descriptive title:** "Circuit breakers prevent cascading failures", "Error Budget Pattern"
+3. **Personal synthesis:** Connections between concepts, interpretation, distilled understanding
+4. **Atomic scope:** Single clear idea, few paragraphs, no step-by-step procedures
+5. **No external source attribution:** Written in the author's voice, not quoting docs
 
-**Strong Reference indicators:**
+**Guide indicators:**
 
-1. **External content:** Quotes from articles/books/docs, code snippets, commands, configuration examples
-2. **Source attribution:** "According to [source]...", URLs, book citations, author names
-3. **How-to instructions:** Step-by-step procedures, runbooks, configuration guides
-4. **Multiple topics:** Several distinct sections, comprehensive coverage, reference lookup format
-5. **Code blocks:** Extensive code examples or configuration
+1. **Action-oriented title:** "How to deploy...", "Setting up...", "Debugging X"
+2. **Step-by-step structure:** Numbered steps, prerequisites, commands to run
+3. **Procedural content:** Runbooks, tutorials, configuration walkthroughs
+4. **Imperative language:** "Run...", "Navigate to...", "Set the value to..."
+5. **Code blocks or commands:** Practical execution details
+
+**Company indicators:**
+
+1. **References internal systems or teams:** Specific team names, internal tool names, org-specific processes
+2. **Org-specific context:** "Our process is...", "The FES Platform team...", "In our environment..."
+3. **Internal URLs or docs:** Links to internal wikis, tickets, or dashboards
+4. **Process ownership:** Describes who owns or is responsible for something
+
+**Learning indicators:**
+
+1. **Contextual or reflective title:** "Lessons from...", "What I learned in...", "Post-mortem:"
+2. **First-person reflection:** "I learned...", "We discovered...", "In retrospect..."
+3. **Time-bound or event-bound:** Related to a specific incident, course, book, or project
+4. **Takeaways section:** Explicit lessons, next steps, or action items from experience
 
 ### Classification Algorithm
 
 To classify content:
 
 1. Read file content: `obsidian read file="Note Name"`
-2. Check for Note indicators (first-person language, assertion title, personal synthesis)
-3. Check for Reference indicators (source attribution, code blocks, external quotes)
-4. If both present, assess which dominates
-5. Assign confidence level
-
-### Confidence Levels
-
-- **High:** Clear indicators, no ambiguity. Single type dominates.
-- **Medium:** Some indicators of both types, but one is stronger. Proceed with suggestion but note the ambiguity.
-- **Low:** Mixed signals, roughly equal. Ask the user to clarify.
+2. Check for concept indicators (assertion title, personal synthesis, atomic scope)
+3. Check for guide indicators (step-by-step, imperative language, procedures)
+4. Check for company indicators (internal references, org-specific context)
+5. Check for learning indicators (reflective, contextual title, first-person lessons)
+6. If multiple types present, assess which dominates
+7. Assign confidence level
 
 ### Handling Ambiguity
 
@@ -49,27 +63,24 @@ When confidence is low, present to the user:
 
 ```
 This content has mixed signals:
-- Has first-person language (Note indicator)
-- Has code blocks (Reference indicator)
+- Has step-by-step instructions (guide indicator)
+- Has personal reflection (learning indicator)
 
 Help me decide:
-1. Is this your synthesis/opinion (Note), or documentation/lookup (Reference)?
-2. Will this need regular updates from external sources?
-3. Do you reference this for lookup, or is it an insight?
+1. Is this primarily a procedure to follow (guide), or a record of what you learned (learning)?
+2. Is this meant for your org specifically (company), or broadly applicable (concept/guide)?
+3. Will you look this up to execute it, or to recall an insight?
 ```
 
 Use **AskUserQuestion** to get their decision.
 
-### Project Detection
+### Content That Spans Multiple Types
 
-Content may also be a Project (150 - Projects/). Project indicators:
+Some content legitimately covers multiple types. When this occurs:
 
-- Action items, task lists, deadlines
-- Goal or deliverable descriptions
-- "Need to", "we should", "by [date]"
-- Multiple phases or milestones
-
-If project detected, suggest using `/create-project` for proper hub creation.
+- **Prefer the dominant purpose** — what will the reader primarily do with this?
+- **Split if distinctly separable** — a guide with a "Lessons Learned" section can be split into a guide + a learning article
+- **Use tags** to cross-reference when a single article genuinely serves two purposes (e.g., a concept article that also explains an internal company usage)
 
 ## Topic Extraction
 
@@ -128,93 +139,112 @@ Consider splitting into separate notes:
 obsidian wordcount file="Note" words
 ```
 
-- **Under 500 words:** Good for a Note (focused)
-- **Over 500 words:** May be Reference material or needs splitting
+- **Under 500 words:** Good for a wiki article (focused)
+- **Over 500 words:** May need splitting
 - **Under 50 words:** Very brief — could be a placeholder or needs expansion
 
 ## Title Generation
 
-### For Notes (Assertion-Style)
+### For Concepts (Assertion-Style or Descriptive)
 
-Pattern: `[Subject] [verb] [outcome]`
+Assertion pattern: `[Subject] [verb] [outcome]`
 
 Examples:
 
 - "Circuit breakers prevent cascading failures"
 - "Error budgets enable feature velocity"
 - "Exponential backoff reduces thundering herd"
-- "Graceful degradation maintains user experience"
 
-Extract the main claim from the first paragraph or conclusion. Simplify to assertion form.
+Descriptive pattern: `[Topic] [Pattern/Principle/Concept]`
 
-### For References (Descriptive)
+Examples:
 
-Use the topic name directly:
-
-- "Terraform State Management Guide"
 - "Circuit Breaker Pattern"
-- "PostgreSQL Performance Tuning"
+- "Error Budget Principle"
+
+### For Guides (Action-Oriented)
+
+Pattern: `How to [verb] [subject]` or `[Verb]ing [subject]`
+
+Examples:
+
+- "How to Deploy a Canary Release"
+- "Setting Up Terraform State Backend"
+- "Debugging Kafka Consumer Lag"
+
+### For Company (Descriptive)
+
+Use the system, process, or team name directly:
+
+- "FES Platform On-Call Process"
+- "Internal Deployment Pipeline"
+- "Team Incident Response Runbook"
+
+### For Learning (Contextual)
+
+Pattern: `Lessons from [X]` or `What I Learned from [X]`
+
+Examples:
+
+- "Lessons from the July 2024 Outage"
+- "What I Learned from the SRE Course"
+- "Post-Mortem: Database Migration Failure"
 
 ## Destination Suggestion
 
-### Notes
+### Wiki Articles
 
-Notes go flat in `200 - Notes/`:
+Articles go in wiki subfolders by type:
+
+| Type | Destination |
+|------|-------------|
+| concept | `wiki/concepts/<kebab-case-title>.md` |
+| guide | `wiki/guides/<kebab-case-title>.md` |
+| company | `wiki/company/<kebab-case-title>.md` |
+| learning | `wiki/learning/<kebab-case-title>.md` |
+
+Example:
 
 ```
-200 - Notes/Circuit breakers prevent cascading failures.md
+wiki/concepts/circuit-breakers-prevent-cascading-failures.md
+wiki/guides/how-to-deploy-a-canary-release.md
+wiki/company/fes-platform-on-call-process.md
+wiki/learning/lessons-from-the-july-2024-outage.md
 ```
 
-### References
-
-References go in topic-specific subfolders. Match topics to existing structure:
+To check existing wiki structure for matching articles:
 
 ```bash
-obsidian folders folder="300 - Reference"
-```
-
-Compare extracted topics against folder names. Suggest the closest match:
-
-```
-Suggested destination: 300 - Reference/SRE-Concepts/
-```
-
-If no good match exists, offer options:
-
-```
-Topics [new-topic] don't match existing folders.
-
-Options:
-A) Create new folder: "300 - Reference/new-topic/"
-B) Place in closest match: "300 - Reference/SRE-Concepts/"
-C) Specify custom location
+obsidian folders folder="wiki"
 ```
 
 ### Projects
 
-Projects go in `150 - Projects/`.
+Projects go in `projects/<kebab-case-name>/`.
 
-## MOC Matching
+If project-like content is detected (action items, task lists, goals, deadlines), suggest using `/create-project` for proper hub creation.
+
+## Domain Index Matching
 
 ### Algorithm
 
 For a piece of content with extracted topics:
 
-1. **Get all MOCs:**
+1. **Get all domain indexes:**
 
    ```bash
-   obsidian files folder="100 - MOCs" ext=md
+   obsidian files folder="wiki/_indexes" ext=md
    ```
 
-2. **For each MOC, calculate score:**
+2. **For each index, calculate score:**
 
-   **A. Keyword match (weight: 2x):** Read MOC content with `obsidian read file="MOC Name"`. Count how many content topics appear in the MOC.
+   **A. Keyword match (weight: 2x):** Read index content with `obsidian read file="Index Name"`. Count how many content topics appear in the index.
 
-   **B. Link overlap (weight: 1x):** Get MOC links with `obsidian links file="MOC Name"`. Count how many link targets overlap with content topics.
+   **B. Domain tag match (weight: 3x):** Check if the index's domain tags overlap with the content's tags or detected themes.
 
-   **C. Title match (weight: 3x):** Check if MOC title contains any content topic.
+   **C. Related article overlap (weight: 1x):** Get index links with `obsidian links file="Index Name"`. Count how many link targets overlap with content topics.
 
-   **Total:** `(keyword_matches * 2) + link_overlaps + (title_match * 3)`
+   **Total:** `(keyword_matches * 2) + (domain_tag_matches * 3) + related_article_overlaps`
 
 3. **Assign confidence:**
    - **High (score >= 5):** Multiple keyword matches, clear thematic fit
@@ -226,48 +256,30 @@ For a piece of content with extracted topics:
 ### Presentation Format
 
 ```
-Suggested MOCs:
-  - [[SLOs MOC]] (high confidence) — 3 keyword matches, title match
-  - [[SRE Concepts MOC]] (medium confidence) — 1 keyword match, parent MOC
+Suggested domain indexes:
+  - [[SLOs Index]] (high confidence) — 3 keyword matches, domain tag match
+  - [[SRE Concepts Index]] (medium confidence) — 1 keyword match, related article overlap
 ```
 
-### New MOC Detection
+### New Domain Index Detection
 
-Suggest creating a new MOC when:
+Suggest creating a new domain index when:
 
-1. **3+ notes share an uncovered topic:**
+1. **3+ articles share domain tags with no existing index covering that domain:**
 
    ```bash
    obsidian search query="reliability patterns" total
    ```
 
-   If count >= 3 and no MOC covers this topic, suggest creation.
+   If count >= 3 and no index covers this domain, suggest creation.
 
-2. **Existing MOC is too large:**
+2. **Existing index is too large:**
 
    ```bash
-   obsidian links file="Big MOC" total
+   obsidian links file="Big Index" total
    ```
 
-   If > 30 links, suggest splitting into sub-MOCs.
-
-3. **Topic is a subsection of existing MOC** with 10+ items — suggest extracting to its own MOC.
-
-### MOC Naming
-
-Follow patterns:
-
-- Topic + MOC: "Reliability Patterns MOC"
-- Category + MOC: "SRE Concepts MOC"
-- Domain + MOC: "Terraform MOC"
-
-### Validation
-
-Before suggesting a MOC:
-
-- Verify it exists: `obsidian file file="MOC Name"`
-- Verify it's not archived: check it's in `100 - MOCs/`, not `400 - Archive/`
-- Don't suggest "Home" or "Index" MOCs unless content is top-level organizational
+   If > 30 entries, suggest splitting into sub-indexes.
 
 ## Thematic Grouping (for Link Discovery)
 
@@ -313,16 +325,6 @@ obsidian links file="Note" total
 
 If > 15, note the file is already well-connected and only show high-confidence suggestions.
 
-## Integration with Obsidian Operations
+## Integration with Skills
 
-This library handles analysis logic. For all vault I/O, use **lib/obsidian-operations.md** commands:
-
-- Read content: `obsidian read`
-- Scan vault: `obsidian files`, `obsidian folders`
-- Check links: `obsidian links`, `obsidian backlinks`
-- Search: `obsidian search`
-- Get structure: `obsidian outline`, `obsidian wordcount`
-
-## Context
-
-This is Task 2 in the migration plan. This library will be referenced by all 7 skills alongside `lib/obsidian-operations.md` (created in Task 1).
+This library handles analysis logic. For all vault I/O, use **lib/obsidian-operations.md** commands. All skills reference this library for content classification, topic extraction, and domain matching.
