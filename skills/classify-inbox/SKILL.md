@@ -1,278 +1,207 @@
 ---
 name: classify-inbox
-description: This skill should be used when the user asks to "process inbox", "classify inbox", "organize inbox files", "move files from inbox", or wants to process items in the "000 - Inbox" folder. Provides interactive classification of inbox files with intelligent destination suggestions and link recommendations.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "process inbox", "classify inbox", "ingest", "process raw", "compile source", "organize raw files", or wants to process unprocessed sources in the "raw/" folder into wiki articles. Scans raw/ for sources not yet referenced by any wiki article, compiles them into wiki articles, updates domain indexes, and logs activity.
+version: 0.2.0
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
-# Classify Inbox Skill
+# Ingest Skill
 
-Process inbox files interactively with intelligent classification, destination suggestions, and link recommendations based on content analysis.
+Scan `raw/` for unprocessed sources and compile them into wiki articles with proper frontmatter, domain indexing, and activity logging.
 
 ## Purpose
 
-Reduce friction in processing inbox items by analyzing each file, determining its type (Note vs Reference), suggesting destination folders, identifying relevant MOCs, and recommending related note links. Present suggestions interactively for user review and editing before execution.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Reduce friction in processing raw sources by scanning for unprocessed files, analyzing content, determining the appropriate wiki subfolder, compiling structured wiki articles with full frontmatter, updating domain indexes, and logging all activity. Present suggestions interactively for user review before execution.
 
 ## When to Use
 
 Invoke this skill when:
 
 - User explicitly runs `/classify-inbox`
-- User mentions processing, organizing, or cleaning up the inbox
-- User wants to move files from `000 - Inbox/`
-- User asks to classify or categorize inbox content
+- User mentions ingesting, processing, or compiling raw sources
+- User asks to process raw files into the wiki
+- User mentions "ingest", "process raw", or "compile source"
+
+## Vault Structure
+
+This skill operates on a Karpathy-style LLM wiki vault:
+
+| Folder | Owner | Purpose |
+|--------|-------|---------|
+| `raw/` | User | Immutable sources (clippings, docs) |
+| `wiki/` | LLM | Compiled knowledge |
+| `wiki/concepts/` | LLM | Atomic concept articles |
+| `wiki/guides/` | LLM | How-to and operational guides |
+| `wiki/company/` | LLM | Company-specific knowledge |
+| `wiki/learning/` | LLM | Learning paths and study notes |
+| `wiki/_indexes/` | LLM | Domain index files |
+| `wiki/_index.md` | LLM | Master index |
+| `wiki/_log.md` | LLM | Activity log |
+| `projects/` | Both | Active project workspaces |
+| `meetings/` | User | Meeting recordings/transcripts |
+| `archive/` | Stale | Superseded content |
 
 ## Workflow Overview
 
-1. **Validate vault** - Pre-flight check and LYT structure validation
-2. **Scan vault** - Build index of MOCs, notes, references
-3. **List inbox files** - Find all markdown files in `000 - Inbox/`
-4. **Process each file** - Analyze, suggest, present, execute
-5. **Report completion** - Summary of moves and links added
+1. **Scan raw/** - Find all source files
+2. **Identify unprocessed** - Cross-reference against wiki articles' `sources:` fields
+3. **Process each source** - Analyze, suggest wiki subfolder, present interactively
+4. **Compile wiki article** - Write with proper frontmatter
+5. **Update indexes and log** - Maintain `wiki/_indexes/` and `wiki/_log.md`
+6. **Report completion** - Summary of compiled articles
 
 ## Process Flow
 
-### Step 1: Pre-flight Check and Validate
+### Step 1: Initialize and Validate
 
-Before any vault operation, verify Obsidian is running:
-
-```bash
-obsidian vault
-```
-
-If this fails, present to the user:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-Use **AskUserQuestion** to get their choice.
-
-Once Obsidian is confirmed running, validate LYT vault structure:
+Check vault structure exists:
 
 ```bash
-obsidian folders
+if [ ! -d "raw" ]; then
+  echo "raw/ directory not found"
+  echo "This doesn't appear to be a wiki vault"
+  exit 1
+fi
+
+if [ ! -d "wiki" ]; then
+  echo "wiki/ directory not found — creating wiki structure"
+  mkdir -p wiki/concepts wiki/guides wiki/company wiki/learning wiki/_indexes
+fi
 ```
 
-Verify output contains all required LYT folders: `000 - Inbox`, `100 - MOCs`, `150 - Projects`, `200 - Notes`, `300 - Reference`, `400 - Archive`.
-
-If any are missing:
-
-```
-⚠️  Missing LYT directories: [list missing folders]
-This doesn't appear to be a complete LYT vault.
-```
-
-Exit if critical folders are missing.
-
-### Step 2: Scan Vault
-
-Build complete vault index using **lib/obsidian-operations.md** and **lib/analysis.md** instructions:
-
-**Get inbox files:**
+Ensure required wiki infrastructure exists:
 
 ```bash
-obsidian files folder="000 - Inbox" ext=md
+# Create _log.md if missing
+if [ ! -f "wiki/_log.md" ]; then
+  echo "# Wiki Activity Log" > wiki/_log.md
+fi
+
+# Create _index.md if missing
+if [ ! -f "wiki/_index.md" ]; then
+  echo "# Wiki Index" > wiki/_index.md
+fi
+
+# Create _indexes/ if missing
+mkdir -p wiki/_indexes
 ```
 
-**Get all MOC files:**
+### Step 2: Identify Unprocessed Sources
+
+Scan `raw/` for all markdown files, then cross-reference against `sources:` fields in existing wiki articles.
 
 ```bash
-obsidian files folder="100 - MOCs" ext=md
+# Get all raw source files
+RAW_FILES=$(find raw/ -name "*.md" -type f)
+
+# Get all sources already referenced by wiki articles
+REFERENCED=$(grep -rh "sources:" wiki/ --include="*.md" -A 20 | grep '\[\[raw/' | sed 's/.*\[\[//;s/\]\].*//')
+
+# Filter to only unprocessed files
+for file in $RAW_FILES; do
+  if ! echo "$REFERENCED" | grep -q "$file"; then
+    UNPROCESSED+=("$file")
+  fi
+done
 ```
 
-**Get Reference folder structure:**
+If no unprocessed files:
 
-```bash
-obsidian folders folder="300 - Reference"
+```
+No unprocessed sources found in raw/. Everything is compiled.
 ```
 
-**Get existing notes:**
+Present count:
 
-```bash
-obsidian files folder="200 - Notes" ext=md
+```
+Found 3 unprocessed sources in raw/:
+
+1. raw/clippings/circuit-breaker-fowler.md
+2. raw/docs/terraform-state-locking.md
+3. raw/clippings/littles-law-wikipedia.md
+
+Process all? [Y/n/select specific]
 ```
 
-Store index for reuse throughout processing.
+### Step 3: Process Each Source
 
-### Step 3: Process Each Inbox File
-
-For each file in inbox:
+For each unprocessed source:
 
 #### 3a. Read and Analyze Content
 
-Use **lib/analysis.md** instructions:
+Read the source file and determine:
 
-**Read file content:**
+- What wiki subfolder it belongs to (concepts, guides, company, learning)
+- What domain tags apply
+- What title the wiki article should have (kebab-case filename)
+- What maturity and confidence levels to assign
+- What related wiki articles exist
 
-```bash
-obsidian read file="Inbox Note"
-```
+**Classification rules:**
 
-**Classify as Note, Reference, or Project** based on:
-
-- First-person language, assertion titles → Note
-- External quotes, code blocks, source attribution → Reference
-- Action items, deadlines, deliverables → Project
-
-**Extract topics and themes** from content and headings:
-
-```bash
-obsidian outline file="Inbox Note" format=md
-```
-
-**Assess atomicity:**
-
-```bash
-obsidian wordcount file="Inbox Note" words
-obsidian outline file="Inbox Note" total
-```
-
-- Under 500 words: Good for a Note
-- Over 500 words: May be Reference or needs splitting
-- More than 4 headings: May cover multiple topics
-
-**Suggest title if needed** (assertion-style for Notes).
-
-**Determine confidence level** (High/Medium/Low).
+| Subfolder | Content Type |
+|-----------|-------------|
+| `wiki/concepts/` | Atomic ideas, patterns, principles, definitions |
+| `wiki/guides/` | How-to content, runbooks, operational procedures |
+| `wiki/company/` | Company-specific architecture, processes, tools |
+| `wiki/learning/` | Study notes, course material, learning paths |
 
 **Output format:**
 
 ```
-📄 Processing: "Error Budget Calculations.md" (1 of 3)
+Processing: "raw/clippings/circuit-breaker-fowler.md" (1 of 3)
 
 Content Analysis:
-- Type: Reference (Confidence: High)
-- Topics: error budgets, SLOs, reliability math
-- Word count: 342
-- Reasoning: Contains formulas and lookup information
+- Suggested subfolder: wiki/concepts/
+- Title: Circuit Breaker Pattern
+- Filename: circuit-breaker-pattern.md
+- Domain: [sre, resilience]
+- Maturity: draft
+- Confidence: medium
+- Reasoning: Describes a pattern/principle — fits concepts/
 ```
 
-#### 3b. Suggest Destination
+#### 3b. Check for Existing Wiki Article
 
-Based on classification:
+Before creating, check if a wiki article on this topic already exists:
 
-**If Project (150 - Projects/):**
+```bash
+# Search by similar filename
+find wiki/ -name "*circuit-breaker*" -type f
 
-- Destination: `150 - Projects/`
-- Content describes a goal with deliverables, deadlines, or action items
-- Suggest using `/create-project` for proper hub creation with frontmatter
-- Project indicators: action items, deadlines, deliverables, goals, "need to", "we should", task lists
+# Search by similar content
+grep -rl "circuit breaker" wiki/ --include="*.md"
+```
 
-**If Note (200 - Notes/):**
+If found:
 
-- Destination: `200 - Notes/`
-- Suggest assertion-style title if current title isn't one
+```
+Existing article found: wiki/concepts/circuit-breaker-pattern.md
 
-**If Reference (300 - Reference/):**
+Options:
+A) Update existing article with new source
+B) Create separate article
+C) Skip this source
+```
 
-- Use topics to match against existing Reference subfolders
-- Get folder list:
+If updating, add the new raw file to the existing article's `sources:` field and update `last_compiled`.
 
-  ```bash
-  obsidian folders folder="300 - Reference"
-  ```
+#### 3c. Suggest Related Articles
 
-- Suggest best-fit subfolder (e.g., `300 - Reference/SRE-Concepts/`)
-- If no good match, list options or suggest creating new subfolder
+Search wiki for related content:
+
+```bash
+# Extract key terms from source content
+# Search for wiki articles mentioning same terms
+grep -rl "resilience\|fault tolerance\|cascade" wiki/ --include="*.md"
+```
 
 **Output format:**
 
 ```
-📁 Suggested Destination:
-   300 - Reference/SRE-Concepts/
-```
-
-#### 3c. Suggest MOC Links
-
-Use **lib/analysis.md** instructions:
-
-**Get all MOCs:**
-
-```bash
-obsidian files folder="100 - MOCs" ext=md
-```
-
-**For each MOC, calculate relevance score:**
-
-- Read MOC content and check keyword matches
-- Get MOC links and check overlap with content topics:
-
-  ```bash
-  obsidian links file="MOC Name"
-  ```
-
-- Check if MOC title matches content topics
-
-**Return top 2-3 matches** with confidence levels (High/Medium/Low).
-
-**Check if new MOC should be created:**
-
-```bash
-obsidian search query="topic term" total
-```
-
-If 3+ notes share a topic not covered by existing MOCs, suggest creation.
-
-**Output format:**
-
-```
-🗺️  Suggested MOCs:
-  - [[SLOs MOC]] (high confidence)
-  - [[SRE Concepts MOC]] (medium confidence)
-```
-
-#### 3d. Suggest Related Note Links
-
-Search vault for related content by extracting key terms and searching:
-
-```bash
-obsidian search query="term" path="200 - Notes"
-obsidian search query="term" path="300 - Reference"
-```
-
-Get search context for relevance scoring:
-
-```bash
-obsidian search:context query="term" format=json
-```
-
-Filter and rank:
-
-- Exclude current file
-- Get existing links to exclude already-linked files:
-
-  ```bash
-  obsidian links file="Inbox Note"
-  ```
-
-- Rank by topic overlap
-- Return top 2-3 suggestions
-
-**Output format:**
-
-```
-🔗 Suggested Related Links:
-  - [[Implementing Service Level Objectives-Hidalgo]] (book notes)
-  - [[SLO Calculations]] (reference)
-```
-
-#### 3e. Check for New MOC Opportunity
-
-Using **lib/analysis.md** logic:
-
-If 3+ notes share topic not covered by existing MOCs:
-
-```
-💡 New MOC Opportunity:
-   3 notes about "reliability patterns" without dedicated MOC
-   Consider creating: "Reliability Patterns MOC"
+Suggested Related Articles:
+  - [[bulkhead-pattern]]
+  - [[retry-with-backoff]]
 ```
 
 ### Step 4: Present Options Interactively
@@ -280,361 +209,362 @@ If 3+ notes share topic not covered by existing MOCs:
 Use **AskUserQuestion** tool to present structured options:
 
 ```
+Source: raw/clippings/circuit-breaker-fowler.md
+
+Compiled Article:
+  Destination: wiki/concepts/circuit-breaker-pattern.md
+  Title: Circuit Breaker Pattern
+  Domain: [sre, resilience]
+  Maturity: draft
+  Confidence: medium
+  Related: [[bulkhead-pattern]], [[retry-with-backoff]]
+
 Would you like to:
-A) Accept and move (recommended)
-B) Edit destination folder
-C) Edit links
-D) Skip this file
-E) Cancel operation
+A) Accept and compile (recommended)
+B) Edit destination subfolder
+C) Edit domain tags
+D) Edit related links
+E) Skip this source
+F) Cancel operation
 ```
 
 Handle each choice:
 
-#### Option A: Accept and Move
+#### Option A: Accept and Compile
 
-Execute the suggested moves and link additions.
+Execute the compilation.
 
 #### Option B: Edit Destination
 
-```bash
-# Get available Reference folders
-obsidian folders folder="300 - Reference"
+```
+Current: wiki/concepts/
+
+Available destinations:
+1. wiki/concepts/
+2. wiki/guides/
+3. wiki/company/
+4. wiki/learning/
+
+Choose (1-4):
 ```
 
-Present to user:
+#### Option C: Edit Domain Tags
 
 ```
-Current suggestion: 300 - Reference/SRE-Concepts/
-
-Available Reference folders:
-1. 300 - Reference/SRE-Concepts/
-2. 300 - Reference/Reading/Book-Summaries/
-3. 300 - Reference/Tools/
-4. 300 - Reference/Incident-Management/
-5. [Custom path]
-
-Choose destination (1-5):
-```
-
-Update destination and proceed.
-
-#### Option C: Edit Links
-
-```
-Suggested links:
-1. [[SLOs MOC]]
-2. [[SRE Concepts MOC]]
-3. [[Implementing Service Level Objectives-Hidalgo]]
+Current domains: [sre, resilience]
 
 Actions:
 - Keep all
-- Remove specific links (enter numbers: 2,3)
-- Add additional links (enter names)
+- Remove specific (enter tags)
+- Add additional (enter tags)
 ```
 
-Update link list and proceed.
-
-#### Option D: Skip
-
-Move to next file without changes.
-
-#### Option E: Cancel
-
-Stop processing, don't modify any files.
-
-### Step 5: Execute Approved Actions
-
-For each approved file:
-
-#### 5a. Move File
-
-Use **lib/obsidian-operations.md**:
-
-```bash
-# Move to destination
-obsidian move file="Error Budget Calculations" to="300 - Reference/SRE-Concepts/"
-```
-
-Verify the move:
-
-```bash
-obsidian file file="Error Budget Calculations"
-```
-
-Handle conflicts: If the file already exists at destination, present options:
+#### Option D: Edit Related Links
 
 ```
-⚠️  File "Error Budget.md" already exists at destination
+Suggested related:
+1. [[bulkhead-pattern]]
+2. [[retry-with-backoff]]
 
-Options:
-A) Rename new file to "Error Budget (2).md"
-B) Merge with existing file (manual)
-C) Skip this file
-D) Overwrite existing (dangerous!)
+Actions:
+- Keep all
+- Remove specific (enter numbers)
+- Add additional (enter article names in kebab-case)
 ```
 
-#### 5b. Add MOC Links
+#### Option E: Skip
 
-Use **lib/obsidian-operations.md** for frontmatter operations:
+Move to next source without changes.
 
-Add MOC links to `mocs:` property:
+#### Option F: Cancel
 
-```bash
-obsidian property:set name="mocs" value="[[SLOs MOC]],[[SRE Concepts MOC]]" type=list file="Error Budget Calculations"
-```
+Stop processing entirely.
 
-This creates frontmatter if it doesn't exist:
+### Step 5: Compile Wiki Article
+
+For each approved source, create the wiki article:
+
+#### 5a. Generate Article Content
+
+Synthesize the raw source into a structured wiki article:
 
 ```markdown
 ---
-tags: [sre, reliability]
-created: 2026-04-13
-mocs:
-  - [[SLOs MOC]]
-  - [[SRE Concepts MOC]]
+title: Circuit Breaker Pattern
+domain: [sre, resilience]
+maturity: draft
+confidence: medium
+sources:
+  - "[[raw/clippings/circuit-breaker-fowler.md]]"
+related:
+  - "[[bulkhead-pattern]]"
+  - "[[retry-with-backoff]]"
+last_compiled: 2026-04-17
 ---
+
+# Circuit Breaker Pattern
+
+## Overview
+
+[Synthesized content from source]
+
+## Key Concepts
+
+[Main ideas]
+
+## Examples
+
+[Practical examples]
+
+## Related
+
+- [[bulkhead-pattern]]
+- [[retry-with-backoff]]
 ```
 
-#### 5c. Add Related Links
+**Filename convention:** kebab-case, e.g., `circuit-breaker-pattern.md`
 
-Add to `## Related` section using append:
+#### 5b. Write the Article
+
+Use **Write** tool to create the file at the determined path (e.g., `wiki/concepts/circuit-breaker-pattern.md`).
+
+#### 5c. Update Domain Index
+
+Find or create the relevant domain index in `wiki/_indexes/`:
 
 ```bash
-obsidian append file="Error Budget Calculations" content="\n## Related\n\n- [[Implementing Service Level Objectives-Hidalgo]]\n- [[SLO Calculations]]"
+# e.g., for domain "sre"
+INDEX_FILE="wiki/_indexes/sre.md"
 ```
 
-**If section exists**, read file first and use **Edit** tool to append to existing section rather than creating a duplicate.
+If the index file exists, append the new article link. If not, create it:
 
-#### 5d. Update Frontmatter Metadata
+```markdown
+---
+title: SRE Domain Index
+domain: sre
+last_updated: 2026-04-17
+---
 
-Add or update fields using **lib/obsidian-operations.md**:
+# SRE
 
-```bash
-# Add tags
-obsidian property:set name="tags" value="error-budget,slo,reliability" type=list file="Error Budget Calculations"
+## Concepts
 
-# Set created date
-obsidian property:set name="created" value="2026-04-13" type=date file="Error Budget Calculations"
+- [[circuit-breaker-pattern]] — Circuit Breaker Pattern
 
-# For Reference files, add type
-obsidian property:set name="type" value="external" file="Error Budget Calculations"
+## Guides
+
+[entries here]
+```
+
+Add the new article under the appropriate section (Concepts, Guides, Company, Learning) matching the subfolder.
+
+#### 5d. Update Master Index
+
+If the article introduces a new domain not yet in `wiki/_index.md`, add it:
+
+```markdown
+## Domains
+
+- [[wiki/_indexes/sre|SRE]]
+- [[wiki/_indexes/resilience|Resilience]]
+```
+
+#### 5e. Append to Activity Log
+
+Add entry to `wiki/_log.md`:
+
+```markdown
+## [2026-04-17] ingest | Circuit Breaker Pattern
+
+- Source: `[[raw/clippings/circuit-breaker-fowler.md]]`
+- Destination: `wiki/concepts/circuit-breaker-pattern.md`
+- Domain: sre, resilience
+- Maturity: draft
 ```
 
 ### Step 6: Verify and Report
 
-After each file:
+After each source:
 
 ```
-✅ Moved to: 300 - Reference/SRE-Concepts/Error Budget Calculations.md
-✅ Added 2 MOC links
-✅ Added 2 related links
-✅ Updated frontmatter
+Compiled: wiki/concepts/circuit-breaker-pattern.md
+Updated index: wiki/_indexes/sre.md
+Logged to: wiki/_log.md
 ```
 
-After all files:
+After all sources:
 
 ```
-📊 Inbox Processing Complete
+Ingest Complete
 
-Processed: 3 files
-Moved: 2 files
-Skipped: 1 file
-- Notes: 0
-- References: 2
-Links added: 8
-MOCs updated: 3
+Processed: 3 sources
+Compiled: 2 articles
+Skipped: 1 source
+  - Concepts: 1
+  - Guides: 1
+Indexes updated: 3
+Log entries added: 2
 
-✅ Inbox is now clean!
+Unprocessed sources remaining: 0
 ```
 
 ## Error Handling
 
-### Empty Inbox
-
-```bash
-obsidian files folder="000 - Inbox" ext=md total
-```
-
-If count is 0:
+### No Unprocessed Sources
 
 ```
-✅ Inbox is clean! No files to process.
+No unprocessed sources in raw/. Everything is already compiled.
 ```
 
 ### File Conflict at Destination
 
-If move fails due to existing file:
-
 ```
-⚠️  File "Error Budget.md" already exists at destination
+Article "circuit-breaker-pattern.md" already exists at wiki/concepts/
 
 Options:
-A) Rename new file to "Error Budget (2).md"
-B) Merge with existing file (manual)
-C) Skip this file
-D) Overwrite existing (dangerous!)
+A) Update existing article (add new source, refresh content)
+B) Create with different name
+C) Skip this source
 ```
 
 ### Ambiguous Classification
 
-If **lib/analysis.md** returns Low confidence:
-
 ```
-📄 Content Analysis:
+Content Analysis:
 - Mixed signals detected
-  - Has first-person language (Note indicator)
-  - Has code blocks (Reference indicator)
+  - Contains operational steps (guide indicator)
+  - Describes a concept/pattern (concept indicator)
 
 Help me decide:
-1. Is this your synthesis/opinion, or documentation?
-2. Will this need regular updates from external sources?
+1. Is this primarily a how-to guide or a concept explanation?
+2. Does it describe what something IS or how to DO something?
 ```
 
 Use **AskUserQuestion** to clarify.
 
-### Broken Links During Addition
-
-Before adding a link, verify target exists:
-
-```bash
-obsidian file file="Target Note"
-```
-
-If not found:
+### Missing Wiki Infrastructure
 
 ```
-⚠️  Cannot add link [[Non-existent Note]]
-Target file doesn't exist in vault
+wiki/_indexes/ directory not found — creating it now.
+wiki/_log.md not found — creating it now.
+```
+
+Automatically create missing infrastructure and continue.
+
+### Empty Source File
+
+```
+Source "raw/clippings/empty-file.md" has no content.
 
 Options:
-A) Skip this link
-B) Create stub file
-C) Edit link target
+A) Skip this source
+B) Delete empty file
 ```
 
 ### Permission Error
 
-If Obsidian CLI command fails with permission error:
-
 ```
-❌ Cannot write to "file.md"
-File may be locked by Obsidian
+Cannot write to "wiki/concepts/article.md"
+File may be locked by Obsidian.
 
 Close the file and retry?
 ```
 
-### Obsidian Not Running
-
-If pre-flight check fails:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
 ## Best Practices
 
-1. **Run pre-flight check** before any operation
-2. **Process files sequentially** for user control
-3. **Always validate paths** before moving
-4. **Check for duplicates** before adding links
-5. **Preserve file content** - never corrupt files
-6. **Provide clear feedback** at each step
-7. **Allow editing** before execution
-8. **Report errors clearly** with recovery options
-9. **Summarize results** at end
-10. **Clean up** - remove empty sections
-
-## Integration with Utilities
-
-This skill uses shared utilities:
-
-- **lib/obsidian-operations.md** - All vault operations via Obsidian CLI
-- **lib/analysis.md** - Classification, topic extraction, MOC matching
+1. **Scan wiki sources once** at start, reuse for all processing
+2. **Process sources sequentially** for user control
+3. **Always validate paths** before writing
+4. **Check for existing articles** before creating duplicates
+5. **Preserve raw sources** — never modify files in `raw/`
+6. **Use kebab-case filenames** for all wiki articles
+7. **Always update indexes** after compiling an article
+8. **Always log activity** in `wiki/_log.md`
+9. **Set maturity to draft** for newly compiled articles
+10. **Allow editing** before execution
 
 ## Usage Examples
 
-### Example 1: Simple Reference File
+### Example 1: Single Source Ingest
 
 ```
 User: /classify-inbox
 
-📄 Processing: "Terraform State Locking.md" (1 of 1)
+Found 1 unprocessed source in raw/:
+1. raw/clippings/terraform-state-locking.md
+
+Processing: "raw/clippings/terraform-state-locking.md" (1 of 1)
 
 Content Analysis:
-- Type: Reference (Confidence: High)
-- Topics: terraform, state management, locking
-- Reasoning: Contains commands and configuration examples
-
-📁 Suggested Destination: 300 - Reference/terraform/
-🗺️  Suggested MOCs: [[Terraform MOC]]
-🔗 Suggested Links: [[Terraform Best Practices]]
+- Suggested subfolder: wiki/guides/
+- Title: Terraform State Locking
+- Filename: terraform-state-locking.md
+- Domain: [terraform, infrastructure]
+- Reasoning: Contains operational steps and configuration
 
 [User accepts]
 
-✅ Moved to: 300 - Reference/terraform/Terraform State Locking.md
-✅ Added 1 MOC link
-✅ Added 1 related link
+Compiled: wiki/guides/terraform-state-locking.md
+Updated index: wiki/_indexes/terraform.md
+Logged to: wiki/_log.md
 
-✅ Inbox is now clean!
+Ingest Complete — 1 article compiled
 ```
 
-### Example 2: Note with Title Suggestion
+### Example 2: Multiple Sources
 
 ```
-📄 Processing: "thoughts on circuit breakers.md"
+User: process raw
 
-Content Analysis:
-- Type: Note (Confidence: High)
-- First-person synthesis detected
-- Suggested title: "Circuit breakers prevent cascading failures"
+Found 3 unprocessed sources in raw/
 
-📁 Suggested Destination: 200 - Notes/
-🗺️  Suggested MOCs: [[Reliability Patterns MOC]], [[SRE Concepts MOC]]
+[Source 1 compiled to wiki/concepts/]
+[Source 2 compiled to wiki/guides/]
+[Source 3 skipped by user]
 
-Would you like to:
-A) Accept (including title change)
-B) Keep original title
-C) Edit manually
+Ingest Complete
+Compiled: 2 articles
+Skipped: 1 source
 ```
 
-### Example 3: Multiple Files
+### Example 3: Source Updates Existing Article
 
 ```
-Found 3 files in inbox. Processing...
+Processing: "raw/docs/circuit-breaker-v2.md"
 
-[File 1 processed]
-[File 2 processed]
-[File 3 skipped by user]
+Existing article found: wiki/concepts/circuit-breaker-pattern.md
 
-📊 Summary:
-Processed: 3 files
-Moved: 2 files
-Skipped: 1 file
+Options:
+A) Update existing article with new source
+
+[User selects A]
+
+Updated: wiki/concepts/circuit-breaker-pattern.md
+  - Added source: [[raw/docs/circuit-breaker-v2.md]]
+  - Refreshed content with new information
+  - Updated last_compiled: 2026-04-17
+Logged to: wiki/_log.md
 ```
 
 ## Tips
 
-- **Process regularly** - Don't let inbox grow too large
-- **Review suggestions** - Edit before accepting
-- **Check MOC relevance** - Remove low-confidence suggestions
-- **Maintain atomicity** - Split files if they cover multiple topics
-- **Use consistent naming** - Follow vault conventions
-- **Create MOCs proactively** - When patterns emerge
-- **Link bidirectionally** - When appropriate
-- **Archive old content** - Move stale items to `400 - Archive/`
+- **Process regularly** — Don't let raw/ accumulate too many unprocessed sources
+- **Review suggestions** — Edit domain tags and subfolder before accepting
+- **Check related links** — Remove irrelevant suggestions
+- **Raw is immutable** — Never modify source files; only compile from them
+- **Draft first, mature later** — New articles start as drafts; revisit to promote maturity
+- **Domain indexes are navigation** — Keep them organized by subfolder type
+- **Kebab-case everything** — Article filenames and wikilinks use kebab-case
 
 ## Related Skills
 
 - **/create-note** - Create new notes from scratch
-- **/create-project** - Create project hubs (when inbox item is a project)
+- **/research** - Research a topic and create a wiki article
+- **/create-project** - Create project hubs
 - **/archive-project** - Complete and archive projects
-- **/discover-links** - Find missing connections after classification
-- **/check-moc-health** - Verify MOCs after adding links
+- **/discover-links** - Find missing connections after ingesting
 
 ## Summary
 
-The classify-inbox skill provides intelligent, interactive inbox processing by analyzing content, suggesting destinations and links, and executing approved actions. Uses shared utilities (**lib/obsidian-operations.md**, **lib/analysis.md**) for consistent vault operations via Obsidian CLI.
+The ingest skill processes unprocessed sources from `raw/` into structured wiki articles. It analyzes content, determines the appropriate wiki subfolder, compiles articles with full frontmatter (title, domain, maturity, confidence, sources, related, last_compiled), updates domain indexes in `wiki/_indexes/`, and logs all activity to `wiki/_log.md`. All suggestions are presented interactively for user review.

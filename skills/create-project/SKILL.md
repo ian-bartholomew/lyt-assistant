@@ -1,19 +1,17 @@
 ---
 name: create-project
-description: This skill should be used when the user asks to "create a project", "new project", "start a project", "add a project", or wants to set up a new project hub note in the 150 - Projects/ folder. Provides guided project creation with proper frontmatter, structure, and MOC linking.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "create a project", "new project", "start a project", "add a project", or wants to set up a new project directory in the projects/ folder. Provides guided project creation with README.md, log.md, decisions.md, and projects index updates.
+version: 0.2.0
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
 # Create Project Skill
 
-Guided creation of a project hub note in `150 - Projects/` with proper frontmatter, structure, success criteria, and MOC associations.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Guided creation of a project directory in `projects/` with README.md (hub), log.md (work log), and decisions.md (key decisions), plus projects index updates.
 
 ## Purpose
 
-Help create new project hub notes with correct structure, status tracking, and connections to the vault following LYT principles. Projects are temporal, action-oriented work containers that produce knowledge artifacts (Notes and Reference).
+Help create new project directories with correct structure, status tracking, and connections to the vault. Projects are temporal, action-oriented work containers that live in `projects/<kebab-case-name>/` with multiple files for different concerns.
 
 ## When to Use
 
@@ -26,42 +24,15 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Pre-flight check** - Verify Obsidian is running
-2. **Gather project details** - Name, goal, due date, area
-3. **Suggest MOC links** - Match to existing MOCs
-4. **Define success criteria** - Interactive checklist building
-5. **Identify first actions** - Next steps to get started
-6. **Create project file** - Write with proper frontmatter and structure
-7. **Update Projects MOC** - Add project to the active list
-
-## Libraries
-
-- **lib/obsidian-operations.md** - All CLI-based vault operations
-- **lib/analysis.md** - Content classification, topic extraction, MOC matching
+1. **Gather project details** - Name, goal, due date, area
+2. **Define success criteria** - Interactive checklist building
+3. **Identify first actions** - Next steps to get started
+4. **Create project directory** - Write README.md, log.md, decisions.md
+5. **Update projects index** - Add to projects/_projects-index.md
 
 ## Process Flow
 
-### Step 1: Pre-flight Check
-
-Before any vault operations, verify Obsidian is running:
-
-```bash
-obsidian vault
-```
-
-If this fails, present to the user:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-Use **AskUserQuestion** to get their choice. Do not proceed until the pre-flight check passes.
-
-### Step 2: Gather Project Details
+### Step 1: Gather Project Details
 
 Ask user for core project information:
 
@@ -83,41 +54,12 @@ What area does this relate to? (e.g., Infrastructure, SRE, Professional Developm
 
 Use **AskUserQuestion** tool for each prompt.
 
-### Step 3: Suggest MOC Links
+**Derive the kebab-case directory name from the project name:**
 
-Scan existing MOCs and suggest relevant ones based on the area and goal:
+- "Load Testing Framework" becomes `load-testing-framework`
+- "Q2 SRE Hiring" becomes `q2-sre-hiring`
 
-```bash
-# List all MOCs
-obsidian files folder="100 - MOCs" ext=md
-```
-
-Read relevant MOCs to analyze content:
-
-```bash
-obsidian read file="MOC Name"
-```
-
-Use **lib/analysis.md** MOC matching algorithm to calculate confidence scores based on:
-
-- Keyword matches (weight: 2x)
-- Title matches (weight: 3x)
-- Link overlap (weight: 1x)
-
-Present suggestions:
-
-```
-Suggested MOCs for this project:
-  - [[Infrastructure & Architecture MOC]] (high confidence) — keyword match
-  - [[SRE Concepts MOC]] (medium confidence) — related topic
-
-Would you like to:
-A) Accept these MOCs
-B) Edit MOC list
-C) Skip MOC linking
-```
-
-### Step 4: Define Success Criteria
+### Step 2: Define Success Criteria
 
 Guide the user through defining what "done" looks like:
 
@@ -138,7 +80,7 @@ Consider adding:
 - [ ] Lessons learned captured
 ```
 
-### Step 5: Identify Next Actions
+### Step 3: Identify Next Actions
 
 Ask for immediate next steps:
 
@@ -149,70 +91,175 @@ What are the first 1-3 actions to get this started?
 
 The first action becomes the `next_action` frontmatter field.
 
-### Step 6: Create Project File
+### Step 4: Generate Tags
 
-Create the project hub note in `150 - Projects/`:
+Auto-generate tags from the project name, area, and goal:
 
-```bash
-# Create file with initial content
-obsidian create path="150 - Projects/[Project-Name].md" content="# [Project Name]\n\n## Goal\n\n[Goal from Step 2]\n\n## Success Criteria\n\n[Criteria from Step 4]\n\n## Next Actions\n\n[Actions from Step 5]\n\n## Log\n\n- 2026-04-13 - Project created\n\n## Notes\n\n\n\n## Resources\n<!-- Links to relevant Notes (200) and Reference (300) files -->\n\n\n## Lessons Learned\n<!-- Populated on completion -->" silent
+```
+Suggested tags: [load-testing, infrastructure, performance]
+
+Would you like to:
+A) Accept these tags
+B) Edit tag list
 ```
 
-Set all frontmatter properties:
+### Step 5: Create Project Directory
+
+Create the directory and all three files:
 
 ```bash
-obsidian property:set name="type" value="project" file="[Project-Name]"
-obsidian property:set name="status" value="active" file="[Project-Name]"
-obsidian property:set name="area" value="[area from Step 2]" file="[Project-Name]"
-obsidian property:set name="due_date" value="[date from Step 2]" type=date file="[Project-Name]"
-obsidian property:set name="next_action" value="[first action from Step 5]" file="[Project-Name]"
-obsidian property:set name="tags" value="[auto-generated from goal and area]" type=list file="[Project-Name]"
-obsidian property:set name="created" value="2026-04-13" type=date file="[Project-Name]"
+mkdir -p projects/load-testing-framework
 ```
 
-If MOCs were selected in Step 3, set the lyt_related_mocs property:
-
-```bash
-obsidian property:set name="lyt_related_mocs" value="[[MOC 1]],[[MOC 2]]" type=list file="[Project-Name]"
-```
-
-### Step 7: Update Projects MOC
-
-Read the current Projects MOC:
-
-```bash
-obsidian read file="Projects MOC"
-```
-
-Use the Edit tool to add the new project to the `## Active` section:
+#### File 1: README.md (Project Hub)
 
 ```markdown
-- [[Project-Name]] — due YYYY-MM-DD — [next_action]
+---
+type: project
+status: active
+area: Infrastructure
+due_date: 2026-06-30
+next_action: Set up k6 test harness
+tags: [load-testing, infrastructure, performance]
+created: 2026-04-17
+---
+
+# Load Testing Framework
+
+## Goal
+
+Build a reusable load testing framework using k6 for all critical API endpoints.
+
+## Success Criteria
+
+- [ ] k6 test harness configured and running
+- [ ] Tests covering top 10 API endpoints
+- [ ] CI integration for automated performance regression detection
+- [ ] Documentation for team onboarding
+
+## Next Actions
+
+- [ ] Set up k6 test harness
+- [ ] Identify top 10 endpoints by traffic volume
+- [ ] Draft test scenarios for checkout flow
+
+## Resources
+
+<!-- Links to wiki articles, raw sources, external docs -->
+
+## Lessons Learned
+
+<!-- Populated on completion -->
 ```
 
-If the Projects MOC doesn't have an Active section, use Edit tool to add it following the Projects MOC template structure.
+#### File 2: log.md (Work Log)
 
-### Step 8: Report Success
+```markdown
+# Load Testing Framework - Log
+
+Work log for the project. Newest entries at the top.
+
+## 2026-04-17
+
+- Project created
+- Goal: Build a reusable load testing framework using k6 for all critical API endpoints
+- First action: Set up k6 test harness
+```
+
+#### File 3: decisions.md (Key Decisions)
+
+```markdown
+# Load Testing Framework - Decisions
+
+Key decisions made during this project. Record the context, options considered, and rationale.
+
+## Template
+
+<!--
+### [Decision Title]
+**Date:** YYYY-MM-DD
+**Status:** proposed | accepted | superseded
+**Context:** Why this decision was needed
+**Options considered:**
+1. Option A - pros/cons
+2. Option B - pros/cons
+**Decision:** What was chosen and why
+-->
+
+*No decisions recorded yet.*
+```
+
+Use the Write tool to create all three files.
+
+### Step 6: Update Projects Index
+
+Read `projects/_projects-index.md` and add the new project under the Active section.
+
+```bash
+# Check if projects index exists
+ls projects/_projects-index.md 2>/dev/null
+```
+
+If the index exists, use Edit to add the new project:
+
+```markdown
+- [[load-testing-framework/README|Load Testing Framework]] - due 2026-06-30 - Set up k6 test harness
+```
+
+If the index does not exist, create it:
+
+```markdown
+---
+title: Projects Index
+type: index
+last_updated: 2026-04-17
+---
+
+# Projects Index
+
+## Active
+
+- [[load-testing-framework/README|Load Testing Framework]] - due 2026-06-30 - Set up k6 test harness
+
+## On Hold
+
+## Completed
+
+## Archived
+```
+
+### Step 7: Report Success
 
 ```
 Project created successfully!
 
-  Created: 150 - Projects/[Project-Name].md
-  Status: active
-  Due: [date]
-  MOCs: [[MOC 1]], [[MOC 2]]
-  Added to [[Projects MOC]]
+Created: projects/load-testing-framework/
+  - README.md (project hub)
+  - log.md (work log)
+  - decisions.md (decision record)
+Updated: projects/_projects-index.md
 
 Next steps:
-- Work on first action: [next_action]
-- Add resources and links as you go
-- Update the Log section with progress
+- Work on first action: Set up k6 test harness
+- Record decisions in decisions.md as they come up
+- Update log.md with progress entries
 - Run /archive-project when complete
 ```
 
-## Project Hub Template
+## Project Directory Structure
 
-The canonical project hub template:
+The canonical project structure:
+
+```
+projects/
+  _projects-index.md          # Index of all projects
+  load-testing-framework/
+    README.md                  # Hub with frontmatter, goal, criteria, actions
+    log.md                     # Chronological work log
+    decisions.md               # Key decisions with context and rationale
+```
+
+## README.md Template
 
 ```markdown
 ---
@@ -222,8 +269,6 @@ area: [area]
 due_date: YYYY-MM-DD
 next_action: [first thing to do]
 tags: []
-lyt_related_mocs:
-  - "[[MOC Name]]"
 created: YYYY-MM-DD
 ---
 
@@ -242,48 +287,58 @@ created: YYYY-MM-DD
 
 - [ ] [Immediate next step]
 
-## Log
-
-- YYYY-MM-DD - Project created
-
-## Notes
-
-
-
 ## Resources
-<!-- Links to relevant Notes (200) and Reference (300) files -->
 
+<!-- Links to wiki articles, raw sources, external docs -->
 
 ## Lessons Learned
+
 <!-- Populated on completion -->
+```
+
+## log.md Template
+
+```markdown
+# [Project Name] - Log
+
+Work log for the project. Newest entries at the top.
+
+## YYYY-MM-DD
+
+- Project created
+- Goal: [goal]
+- First action: [next_action]
+```
+
+## decisions.md Template
+
+```markdown
+# [Project Name] - Decisions
+
+Key decisions made during this project. Record the context, options considered, and rationale.
+
+## Template
+
+<!--
+### [Decision Title]
+**Date:** YYYY-MM-DD
+**Status:** proposed | accepted | superseded
+**Context:** Why this decision was needed
+**Options considered:**
+1. Option A - pros/cons
+2. Option B - pros/cons
+**Decision:** What was chosen and why
+-->
+
+*No decisions recorded yet.*
 ```
 
 ## Error Handling
 
-### Obsidian Not Running
-
-If pre-flight check fails:
+### Directory Already Exists
 
 ```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-### File Already Exists
-
-Check before creating:
-
-```bash
-obsidian file file="[Project-Name]"
-```
-
-If the file exists:
-
-```
-  File "150 - Projects/[Name].md" already exists
+Directory "projects/load-testing-framework/" already exists.
 
 Options:
 A) Choose a different name
@@ -291,71 +346,58 @@ B) Open existing project
 C) Cancel
 ```
 
+### Missing projects/ Directory
+
+```bash
+mkdir -p projects
+```
+
+Create the directory silently and continue.
+
 ### No Due Date Provided
 
-If user leaves due date blank, omit the `due_date` property and note it in the output:
+Set `due_date: ""` in frontmatter and note it in the output:
 
 ```
-  No due date set. You can add one later in the frontmatter.
+No due date set. You can add one later in the README.md frontmatter.
 ```
 
-### Projects MOC Not Found
+### Projects Index Not Found
 
-If `obsidian read file="Projects MOC"` fails, the Projects MOC doesn't exist. Create it using the canonical template:
-
-```bash
-obsidian create path="100 - MOCs/Projects MOC.md" content="# Projects MOC\n\n## Active\n\n- [[Project-Name]] — due YYYY-MM-DD — [next_action]\n\n## Blocked\n\n\n## On Hold\n\n\n## Complete\n\n" silent
-```
-
-Then set properties:
-
-```bash
-obsidian property:set name="type" value="moc" file="Projects MOC"
-obsidian property:set name="created" value="2026-04-13" type=date file="Projects MOC"
-```
+Create it from scratch with the new project as the first entry.
 
 ## Special Cases
 
 ### Quick Project Creation
 
-If user provides all details in one message (e.g., "create a project called X for Y due Z"), skip the interactive prompts and create directly, then confirm.
+If user provides all details in one message (e.g., "create a project called Load Testing Framework for building k6 tests, due June 30"), skip the interactive prompts and create directly, then confirm.
 
-### Project from Inbox Item
+### Project from Raw Source
 
-If user references an inbox item:
+If user references a raw/ file:
 
-1. Read the inbox file:
-
-   ```bash
-   obsidian read file="Inbox-Item-Name"
-   ```
-
-2. Extract goal and context from content
+1. Read the raw file
+2. Extract goal and context
 3. Pre-fill project details
-4. Offer to move/delete the inbox item after creation:
-
-   ```bash
-   obsidian delete file="Inbox-Item-Name"
-   ```
+4. Create project with source linked in Resources
 
 ## Best Practices
 
-1. **Keep project names short** - Use kebab-case or title case for filenames
+1. **Kebab-case directory names always** - `load-testing-framework`, not `Load Testing Framework`
 2. **One goal per project** - If multiple goals, suggest splitting into separate projects
 3. **Concrete success criteria** - Avoid vague items; make them checkable
 4. **Always set a first action** - Projects without next actions stall
-5. **Link to MOCs** - Keeps projects connected to the knowledge graph
-6. **Start the log** - First entry is always "Project created"
-7. **Update Projects MOC** - Always keep the index current
-8. **Use CLI for all operations** - No direct shell commands (`mkdir`, `cat`, `find`)
+5. **Start the log immediately** - First entry records creation context
+6. **Record decisions early** - Even small decisions matter in retrospect
+7. **Update the projects index** - Always keep discovery paths current
+8. **Use Resources for links** - Connect to wiki articles and raw sources
 
 ## Related Skills
 
 - **/archive-project** - Complete and archive a project
-- **/classify-inbox** - Process inbox items (may become projects)
-- **/create-note** - Create knowledge artifacts from project work
-- **/check-moc-health** - Verify Projects MOC after changes
+- **/classify-inbox** - Process raw/ files (may become projects)
+- **/create-note** - Create wiki articles from project work
 
 ## Summary
 
-The create-project skill provides guided project hub creation with proper structure, status tracking, MOC linking, and Projects MOC updates following LYT principles. Uses Obsidian CLI for all vault operations. Ensures new projects are properly integrated into the vault from creation.
+The create-project skill provides guided project directory creation with README.md (hub), log.md (work log), and decisions.md (decision record) in `projects/<kebab-case-name>/`. Updates `projects/_projects-index.md` to keep the project discoverable. Ensures new projects are properly structured and integrated from creation.

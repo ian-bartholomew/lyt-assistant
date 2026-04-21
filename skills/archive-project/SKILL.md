@@ -1,19 +1,17 @@
 ---
 name: archive-project
-description: This skill should be used when the user asks to "archive a project", "complete a project", "finish a project", "close a project", or wants to move a completed project from 150 - Projects/ to 400 - Archive/Projects/. Handles status updates, knowledge extraction, MOC updates, and archival.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "archive a project", "complete a project", "finish a project", "close a project", or wants to move a completed project from projects/ to archive/projects/. Handles knowledge extraction into wiki, status updates, index updates, and archival.
+version: 0.2.0
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
 # Archive Project Skill
 
-Complete and archive a project by updating its status, extracting knowledge artifacts, moving it to archive, and updating the Projects MOC.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Complete and archive a project by extracting knowledge artifacts into the wiki, updating indexes, and moving the project directory to archive.
 
 ## Purpose
 
-Provide a structured workflow for completing projects that ensures no knowledge is lost. Projects produce insights (Notes) and documentation (Reference) — this skill makes sure those artifacts are captured before the project hub moves to archive.
+Provide a structured workflow for completing projects that ensures no knowledge is lost. Projects produce insights and documentation — this skill compiles those into wiki articles (concepts, guides) before moving the project directory to archive.
 
 ## When to Use
 
@@ -26,45 +24,23 @@ Invoke this skill when:
 
 ## Workflow Overview
 
-1. **Pre-flight check** - Verify Obsidian is running
-2. **Select project** - Identify which project to archive
-3. **Review completion** - Check success criteria status
-4. **Update status frontmatter** - Set status to `complete`
-5. **Extract knowledge artifacts** - Identify Notes and Reference to create
-6. **Capture lessons learned** - Fill in the Lessons Learned section
-7. **Move to archive** - Move hub note to `400 - Archive/Projects/`
-8. **Update Projects MOC** - Move from Active to Recently Completed
-9. **Report summary** - Confirm what was done
+1. **Select project** - Identify which project to archive
+2. **Review completion** - Check success criteria and README status
+3. **Extract knowledge artifacts** - Compile insights into wiki articles
+4. **Capture lessons learned** - Record in project log
+5. **Move to archive** - Move entire project directory to `archive/projects/`
+6. **Update indexes** - Update `projects/_projects-index.md` and `wiki/_log.md`
+7. **Report summary** - Confirm what was done
 
 ## Process Flow
 
-### Step 0: Pre-flight Check
-
-Before any vault operations, verify Obsidian is running:
-
-```bash
-obsidian vault
-```
-
-If this fails, present to the user:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-Use **AskUserQuestion** to get their choice. Do not proceed with vault operations until the pre-flight check passes.
-
 ### Step 1: Select Project
 
-List active projects and let user choose:
+List active projects:
 
 ```bash
-# List all projects in 150 - Projects/
-obsidian files folder="150 - Projects" ext=md
+# List all project directories in projects/
+ls -d projects/*/
 ```
 
 Present list:
@@ -72,37 +48,38 @@ Present list:
 ```
 Which project would you like to archive?
 
-1) FooBar-Project (due 2026-04-30) — active
-2) New-Alerting-System-Runbook (due 2026-03-31) — active
-3) Performance-Reviews-Q1 (due 2026-03-31) — active
-4) JFrog Artifactory — on-hold
+1) projects/alerting-migration/
+2) projects/terraform-refactor/
+3) projects/slo-dashboard/
 
-Select (1-4):
+Select (1-3):
 ```
 
 If user already specified a project name, skip this step.
 
 ### Step 2: Review Completion Status
 
-Read the project file and check success criteria:
+Read the project README and log:
 
 ```bash
-obsidian read file="Project-Name"
+cat "projects/<name>/README.md"
+cat "projects/<name>/log.md"
 ```
 
 Present status:
 
 ```
-Project: [Project Name]
+Project: <name>
 
-Success Criteria Status:
-  [x] Project scope and requirements defined
-  [x] All deliverables identified
-  [ ] Work completed and tested          <-- INCOMPLETE
-  [x] Project reviewed and approved
-  [ ] Lessons learned documented          <-- INCOMPLETE
+README Status:
+  Status: active
+  Success Criteria:
+  [x] Requirements defined
+  [x] Implementation complete
+  [ ] Documentation written          <-- INCOMPLETE
+  [x] Reviewed and approved
 
-2 of 5 criteria incomplete.
+1 of 4 criteria incomplete.
 ```
 
 If criteria are incomplete, ask:
@@ -116,82 +93,85 @@ C) Cancel — keep working on the project
 
 Use **AskUserQuestion** for this prompt.
 
-### Step 3: Update Status Frontmatter
+### Step 3: Extract Knowledge Artifacts
 
-Update the project's frontmatter properties using Obsidian CLI:
-
-```bash
-# Set status to complete
-obsidian property:set name="status" value="complete" file="Project-Name"
-
-# Add completion date (use today's date)
-obsidian property:set name="completed_date" value="2026-04-13" type=date file="Project-Name"
-
-# Remove next_action (no more actions for completed projects)
-obsidian property:remove name="next_action" file="Project-Name"
-```
-
-The `type`, `area`, `due_date`, `tags`, `lyt_related_mocs`, and `created` properties remain unchanged.
-
-### Step 4: Extract Knowledge Artifacts
-
-This is the critical step. Review the project's Notes, Log, and Resources sections for knowledge worth preserving.
+This is the critical step. Review the project directory for knowledge worth preserving as wiki articles.
 
 ```
-Let's check for knowledge artifacts to extract before archiving.
+Reviewing project content for compilable knowledge:
 
-Reviewing project content for:
-- Insights or concepts → should become Notes (200)
-- Configs, runbooks, or docs → should become Reference (300)
+Scanning:
+- README.md — project overview and decisions
+- log.md — chronological work log
+- decisions.md — architecture decision records
+- Any other .md files in the project directory
+
+Looking for:
+- Concepts → wiki/concepts/ articles
+- How-to knowledge → wiki/guides/ articles
+- Company-specific info → wiki/company/ articles
 ```
 
-#### 4a. Scan Project Content
+#### 3a. Scan Project Content
 
-Read the project file content (from Step 2) and analyze:
+Read all markdown files in the project directory and analyze:
 
-- **Log entries** - Any entries that capture reusable insights?
-- **Notes section** - Any content that should be a standalone note?
-- **Resources section** - Are all referenced files already in Notes/Reference?
-- **Lessons Learned** - These often become great Notes (200)
+- **decisions.md** - ADRs that capture reusable patterns or concepts
+- **log.md** - Entries that capture reusable insights
+- **README.md** - Overview content worth preserving
+- **Other files** - Any supplementary docs
 
-Use the classification logic from **lib/analysis.md** to identify:
-
-- Content with first-person synthesis → Note candidates
-- Content with code, configs, or how-to instructions → Reference candidates
-
-#### 4b. Present Extraction Suggestions
+#### 3b. Present Extraction Suggestions
 
 ```
 Knowledge Extraction Suggestions:
 
-  Notes (200) — insights to preserve:
-  1. "Phased migrations reduce blast radius" (from Log entry 2026-03-30)
-  2. [No more suggestions]
+  Concepts (wiki/concepts/):
+  1. "circuit-breaker-pattern" — from decisions.md ADR on resilience approach
+  2. "error-budget-policy" — from log entry on SLO negotiation
 
-  Reference (300) — docs to preserve:
-  1. Runbook content could become "300 - Reference/Runbooks/[name].md"
-  2. [No more suggestions]
+  Guides (wiki/guides/):
+  1. "migrating-alerting-to-datadog" — from README and log entries
+  2. "terraform-state-migration" — from decisions.md
+
+  Company (wiki/company/):
+  1. "alerting-architecture" — from project overview
 
 Would you like to:
-A) Create suggested artifacts now (uses /create-note for each)
-B) Skip — all knowledge is already captured
+A) Create suggested articles now
+B) Skip — all knowledge is already captured in wiki
 C) Add your own artifacts to extract
 ```
 
-#### 4c. Create Artifacts
+#### 3c. Create Wiki Articles
 
-For each approved artifact:
+For each approved artifact, create a properly structured wiki article:
 
-- Use the create-note workflow (from the create-note skill) to create properly structured files
+```yaml
+---
+title: Circuit Breaker Pattern
+domain: [sre, resilience]
+maturity: draft
+confidence: medium
+related:
+  - "[[bulkhead-pattern]]"
+  - "[[error-budget-policy]]"
+last_compiled: 2026-04-17
+---
+```
+
+- Use kebab-case filenames
+- Place in the appropriate wiki subfolder
+- Add `related:` links to existing wiki articles
+- Set `maturity: draft` for newly extracted articles
 - Link back to the archived project for provenance
-- Add to relevant MOCs using **lib/analysis.md** MOC matching
 
-### Step 5: Capture Lessons Learned
+### Step 4: Capture Lessons Learned
 
-If the Lessons Learned section is empty, prompt the user:
+If the project log does not have a lessons learned entry, prompt the user:
 
 ```
-The Lessons Learned section is empty. This is valuable for future projects.
+The project log has no lessons learned entry. This is valuable for future projects.
 
 What went well?
 > [User input]
@@ -203,10 +183,12 @@ Any surprises or unexpected challenges?
 > [User input]
 ```
 
-Update the project file's Lessons Learned section using the Edit tool:
+Append a final entry to `projects/<name>/log.md`:
 
 ```markdown
-## Lessons Learned
+## 2026-04-17 — Project Archived
+
+### Lessons Learned
 
 **What went well:**
 - [User's input]
@@ -218,60 +200,75 @@ Update the project file's Lessons Learned section using the Edit tool:
 - [User's input]
 ```
 
-If the section is already filled, skip this step.
+If lessons are already captured, skip this step.
 
-### Step 6: Move to Archive
-
-Move the project hub note to archive:
+### Step 5: Move to Archive
 
 ```bash
-# Move the project hub note (creates directory if needed)
-obsidian move file="Project-Name" to="400 - Archive/Projects/"
+# Ensure archive directory exists
+mkdir -p "archive/projects"
+
+# Move the entire project directory
+mv "projects/<name>" "archive/projects/<name>"
 ```
 
 Verify the move:
 
 ```bash
-# Confirm new location
-obsidian file file="Project-Name"
+ls "archive/projects/<name>/README.md"
 ```
 
-The output should show the file is now in `400 - Archive/Projects/`.
+### Step 6: Update Indexes
 
-### Step 7: Update Projects MOC
+#### 6a. Update Projects Index
 
-Read and update the Projects MOC (`100 - MOCs/Projects MOC.md`):
-
-```bash
-# Read the MOC
-obsidian read file="Projects MOC"
-```
+Read and update `projects/_projects-index.md`:
 
 1. **Remove** the project from its current status section (Active, On Hold, or Blocked)
-2. **Add** the project to the `## Recently Completed` section with completion date
+2. **Add** the project to the `## Recently Completed` section with completion date and archive path
 
 Use the Edit tool:
 
 ```markdown
 ## Recently Completed
 
-- [[Project-Name]] — completed 2026-04-13
+- ~~<name>~~ — completed 2026-04-17 → `archive/projects/<name>/`
 ```
 
-### Step 8: Report Summary
+#### 6b. Append to Wiki Log
+
+Append an entry to `wiki/_log.md`:
+
+```markdown
+## [2026-04-17] archive | Archived project: <name>
+
+- Moved `projects/<name>/` to `archive/projects/<name>/`
+- Extracted knowledge artifacts:
+  - `wiki/concepts/circuit-breaker-pattern.md` (new)
+  - `wiki/guides/migrating-alerting-to-datadog.md` (new)
+- Lessons learned captured in project log
+```
+
+#### 6c. Update Domain Indexes
+
+For each wiki article created during extraction, ensure it appears in the relevant domain index under `wiki/_indexes/`.
+
+### Step 7: Report Summary
 
 ```
-Project archived successfully!
+Project archived successfully.
 
-  Archived: 150 - Projects/[name].md → 400 - Archive/Projects/[name].md
-  Status: complete (completed 2026-04-13)
+  Moved: projects/<name>/ → archive/projects/<name>/
+  Files in archive: [count]
   Knowledge artifacts created: [count]
   Lessons learned: captured
-  Projects MOC: updated
+  Projects index: updated
+  Wiki log: updated
 
-The project hub is now in archive. Knowledge artifacts remain in:
-- Notes (200): [list any created]
-- Reference (300): [list any created]
+  Wiki articles created:
+  - wiki/concepts/circuit-breaker-pattern.md
+  - wiki/guides/migrating-alerting-to-datadog.md
+  - wiki/company/alerting-architecture.md
 ```
 
 ## Status Transition Options
@@ -284,135 +281,83 @@ What status change do you need?
 A) Complete and archive (full workflow)
 B) Mark as blocked — update status only
 C) Put on hold — update status only
-D) Reactivate — move back to active
+D) Reactivate — move back from archive to active
 ```
 
 ### For Blocked/On-Hold
 
-Only update frontmatter and Projects MOC:
+Only update the project README frontmatter and projects index:
 
-```bash
-# Update status
-obsidian property:set name="status" value="blocked" file="Project-Name"
-# or
-obsidian property:set name="status" value="on-hold" file="Project-Name"
+```yaml
+status: blocked    # or on-hold
 ```
 
-Read and edit the Projects MOC to move the project to the appropriate section.
+Move the project to the appropriate section in `projects/_projects-index.md`.
 
 ### For Reactivate
 
-If project is in `400 - Archive/Projects/`:
+If project is in `archive/projects/<name>/`:
 
 ```bash
-# Move back to active projects
-obsidian move file="Project-Name" to="150 - Projects/"
-
-# Update status to active
-obsidian property:set name="status" value="active" file="Project-Name"
-
-# Remove completed_date if present
-obsidian property:remove name="completed_date" file="Project-Name"
+mv "archive/projects/<name>" "projects/<name>"
 ```
 
-Read and edit the Projects MOC to move the project back to the Active section.
+Update README frontmatter to `status: active` and move in projects index.
 
 ## Error Handling
 
-### Obsidian Not Running
-
-If the pre-flight check fails:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
 ### Project Not Found
 
-```bash
-# Search for project
-obsidian file file="Project-Name"
 ```
-
-If not found in `150 - Projects/`:
-
-```
-  Project "[name]" not found in 150 - Projects/
+Project "<name>" not found in projects/
 
 Searching archive...
-```
-
-```bash
-# Check archive
-obsidian files folder="400 - Archive/Projects" ext=md
-```
-
-[If found in archive]: This project is already archived at 400 - Archive/Projects/[name].md
+[If found in archive]: This project is already archived at archive/projects/<name>/
 [If not found anywhere]: No project with that name exists. Use /create-project to create one.
+```
 
-### Projects MOC Missing or Malformed
-
-Check if Projects MOC exists:
+### Archive Directory Missing
 
 ```bash
-obsidian file file="Projects MOC"
+mkdir -p "archive/projects"
 ```
 
-If the Projects MOC doesn't exist or doesn't have the expected sections, use the Edit tool to create/fix it before updating.
+Create silently and continue.
 
-Expected sections:
+### Projects Index Missing or Malformed
 
-- `## Active`
-- `## On Hold`
-- `## Blocked`
-- `## Recently Completed`
+If `projects/_projects-index.md` doesn't exist or doesn't have the expected sections, create/fix it before updating.
 
-### File Conflict in Archive
-
-If `obsidian move` reports file already exists:
+### Directory Conflict in Archive
 
 ```
-  File already exists in archive: 400 - Archive/Projects/[name].md
+Directory already exists in archive: archive/projects/<name>/
 
 Options:
-A) Rename to [name] (2).md
-B) Overwrite existing (use with caution)
+A) Rename to <name>-2
+B) Overwrite existing
 C) Cancel
 ```
 
-Use **AskUserQuestion** to get their choice.
-
 ## Best Practices
 
-1. **Always run pre-flight check** before any vault operation
-2. **Always check success criteria** - Don't archive incomplete projects without acknowledgment
-3. **Extract knowledge first** - The whole point of projects is to produce lasting knowledge
-4. **Capture lessons learned** - Even brief notes are valuable for future projects
-5. **Update the MOC** - Keep the index accurate
-6. **Add completion date** - Useful for tracking project duration
-7. **Clear next_action** - Completed projects have no next action
-8. **Verify the move** - Confirm the file landed in archive using `obsidian file`
-9. **Link artifacts to project** - Provenance helps trace where knowledge came from
-10. **Use CLI for all operations** - Never fall back to shell commands mid-workflow
-
-## Integration with Libraries
-
-This skill uses shared libraries:
-
-- **lib/obsidian-operations.md** - All vault I/O operations using Obsidian CLI
-- **lib/analysis.md** - Content classification, topic extraction, MOC matching for artifact extraction
+1. **Always check success criteria** - Don't archive incomplete projects without acknowledgment
+2. **Extract knowledge first** - The whole point of projects is to produce lasting wiki knowledge
+3. **Capture lessons learned** - Even brief notes are valuable for future projects
+4. **Update both indexes** - Projects index and wiki log must stay accurate
+5. **Add completion date** - Useful for tracking project duration
+6. **Use kebab-case** - All wiki article filenames use kebab-case
+7. **Verify the move** - Confirm the directory landed in archive
+8. **Link artifacts to project** - Provenance helps trace where knowledge came from
+9. **Set maturity: draft** - Newly extracted articles need review before promotion
 
 ## Related Skills
 
 - **/create-project** - Create new project hubs
-- **/create-note** - Create knowledge artifacts during extraction
-- **/classify-inbox** - Process inbox items that may relate to projects
-- **/check-moc-health** - Verify Projects MOC after archival
+- **/create-note** - Create wiki articles during extraction
+- **/classify-inbox** - Process raw items that may relate to projects
+- **/check-moc-health** - Verify wiki health after archival
 
 ## Summary
 
-The archive-project skill provides a structured workflow for completing projects that ensures knowledge is preserved. It handles status updates, knowledge extraction, lessons learned capture, archival, and MOC updates — making sure nothing valuable is lost when a project finishes. All operations use the Obsidian CLI for safe, reliable vault manipulation.
+The archive-project skill provides a structured workflow for completing projects that ensures knowledge is compiled into the wiki before archival. It handles knowledge extraction, lessons learned capture, directory archival, and index updates — making sure nothing valuable is lost when a project finishes.

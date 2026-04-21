@@ -1,19 +1,17 @@
 ---
 name: discover-links
-description: This skill should be used when the user asks to "discover links", "find missing connections", "find missing links", "connect notes", "link discovery", or wants to identify relationships between existing notes that aren't currently linked.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "discover links", "find missing connections", "find missing links", "connect notes", "link discovery", "find related articles", or wants to identify relationships between existing wiki articles that aren't currently linked.
+version: 0.2.0
+allowed-tools: [Read, Edit, Grep, Glob, AskUserQuestion]
 ---
 
 # Discover Links Skill
 
-Find missing connections between existing notes by analyzing shared topics and suggesting link opportunities grouped by theme.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Find missing connections between wiki articles by analyzing shared topics and suggesting `related:` frontmatter additions, grouped by domain.
 
 ## Purpose
 
-Improve vault connectivity by discovering notes that mention similar topics but aren't linked to each other. Groups suggestions by theme for easy review and presents batch or individual link-adding options.
+Improve wiki connectivity by discovering articles that share topics but don't reference each other. Suggests additions to the `related:` frontmatter field and cross-references in domain indexes. Groups suggestions by domain for efficient review.
 
 ## When to Use
 
@@ -21,192 +19,151 @@ Invoke this skill when:
 
 - User explicitly runs `/discover-links`
 - User mentions finding, discovering, or creating connections
-- User wants to improve vault linking
-- User asks about orphaned or under-connected notes
-- After processing inbox files (to connect new content)
+- User wants to improve wiki linking
+- User asks about orphaned or under-connected articles
+- After adding new wiki articles (to connect new content)
 
 ## Workflow Overview
 
-1. **Pre-flight check** - Verify Obsidian vault access
-2. **Scan vault** - Build topic index for all notes
-3. **Find opportunities** - Identify shared topics without links
-4. **Group by theme** - Organize suggestions by topic area
-5. **Present interactively** - Allow review and selection
-6. **Add links** - Execute approved connections
+1. **Scan wiki** - Build topic index for all articles
+2. **Find opportunities** - Identify shared topics without links
+3. **Group by domain** - Organize suggestions by domain
+4. **Present interactively** - Allow review and selection
+5. **Update frontmatter** - Add approved `related:` entries
+6. **Check index coverage** - Suggest domain index cross-references
 
 ## Process Flow
 
-### Step 0: Pre-flight Check
+### Step 1: Scan Wiki and Build Topic Index
 
-Verify Obsidian CLI access:
+Get all wiki articles:
 
 ```bash
-obsidian vault
+# Get all markdown files in wiki/ (excluding indexes, log, attachments)
+ARTICLES=$(find wiki/ -name "*.md" \
+  -not -path "wiki/_indexes/*" \
+  -not -path "wiki/_attachments/*" \
+  -not -path "wiki/_log.md" \
+  -not -path "wiki/_index.md" \
+  -type f | sort)
 ```
 
-This confirms:
+For each article, extract:
 
-- Vault path is accessible
-- CLI is properly configured
-- Vault root is correct
+- **Frontmatter fields:** `title`, `domain`, `related`, `maturity`
+- **Existing wikilinks:** All `[[kebab-case-target]]` references in body
+- **Existing related:** All entries in `related:` frontmatter list
+- **Key topics:** Extract from title, headings, body content (technical terms, concepts)
 
-If this fails, abort and report configuration issue.
+Build a topic-to-articles mapping:
 
-### Step 1: Scan Vault and Build Topic Index
-
-Get all files excluding inbox and archive using **lib/obsidian-operations.md**:
-
-```bash
-# Get all markdown files
-obsidian files format=json > all_files.json
 ```
-
-Filter out inbox (000) and archive (400) folders manually from the JSON.
-
-For each file, extract topics using **lib/analysis.md**:
-
-```bash
-# Read file content
-obsidian read file="Note Name"
-
-# Extract topics using lib/analysis.md:
-# - Keywords (technical terms)
-# - Concepts (important nouns)
-# - Technologies (tools, languages)
-# Store: file → [topics]
-```
-
-Build topic-to-files mapping:
-
-```bash
-# For each topic, list files that mention it using search
-obsidian search query="topic" format=json total
-
-# This gives count of matches per topic
-# Parse JSON to build topic → [files] mapping
+Topic: "circuit-breaker" → [circuit-breaker-pattern.md, resilience-patterns.md, api-gateway-patterns.md]
+Topic: "error-budget" → [error-budget-policy.md, slo-burn-rate.md, reliability-targets.md]
+Topic: "terraform" → [terraform-state-migration.md, infrastructure-as-code.md, deploy-pipeline.md]
 ```
 
 ### Step 2: Find Connection Opportunities
 
-For each topic, find files that:
+For each topic, find article pairs that:
 
-1. **Share the topic** (both mention it)
-2. **Don't link to each other** (missing connection)
+1. **Share the topic** (both mention it in title, headings, or body)
+2. **Don't link to each other** (neither has the other in `related:` or body wikilinks)
 3. **Aren't the same file**
 
-```bash
-# For each topic:
-# 1. Find files mentioning this topic
-obsidian search query="topic" format=json
-
-# 2. For each pair of files in results:
-#    Check if file_a links to file_b
-obsidian links file="File A" format=json
-
-# 3. Parse JSON to check if "File B" is in the links array
-# 4. If not found, record as missing connection opportunity
+```
+For each topic:
+  For each pair of articles sharing this topic:
+    Check if article-a has [[article-b]] in related: or body
+    Check if article-b has [[article-a]] in related: or body
+    If neither links to the other: flag as connection opportunity
 ```
 
-Example logic:
+### Step 3: Group Suggestions by Domain
+
+Cluster related suggestions using the `domain:` frontmatter of involved articles:
 
 ```
-Topic: "error budget"
-Files: [A.md, B.md, C.md]
+Domain: sre (12 connections)
+  - circuit-breaker-pattern ↔ bulkhead-pattern (shared: resilience, fault-tolerance)
+  - slo-burn-rate ↔ error-budget-policy (shared: slo, reliability)
+  - incident-response ↔ postmortem-template (shared: incidents)
+  [... 9 more ...]
 
-Check A → B: obsidian links file="A" | check if B exists
-Check A → C: obsidian links file="A" | check if C exists
-Check B → A: obsidian links file="B" | check if A exists
-Check B → C: obsidian links file="B" | check if C exists
-Check C → A: obsidian links file="C" | check if A exists
-Check C → B: obsidian links file="C" | check if B exists
+Domain: observability (5 connections)
+  - grafana-dashboard-setup ↔ prometheus-queries (shared: monitoring, metrics)
+  - distributed-tracing ↔ opentelemetry-setup (shared: tracing)
+  [... 3 more ...]
 
-Missing links = opportunities
+Domain: infrastructure (3 connections)
+  - terraform-state-migration ↔ infrastructure-as-code (shared: terraform)
+  [... 2 more ...]
 ```
 
-### Step 3: Group Suggestions by Theme
-
-Cluster related suggestions using **lib/analysis.md**:
-
-**Group criteria:**
-
-- Shared topics (same keyword domain)
-- Similar file locations
-- Common MOC associations
-
-Example grouping:
-
-```
-Group 1: Error Budget Theme
-- 8 connections around "error budgets", "SLOs"
-
-Group 2: Incident Management Theme
-- 5 connections around "incidents", "postmortems"
-
-Group 3: Reliability Patterns Theme
-- 12 connections around "circuit breaker", "bulkhead", "retry"
-```
-
-### Step 4: Rank Groups by Confidence
+### Step 4: Rank and Score
 
 Score each suggestion:
 
-- **High confidence:** Topic appears frequently in both files
-- **Medium confidence:** Topic appears in one file, related topic in other
-- **Low confidence:** Weak topic overlap
+- **High confidence:** Topic appears in headings or title of both articles; articles share multiple topics; articles share domain tags
+- **Medium confidence:** Topic appears in body of both articles; single shared topic; related domains
+- **Low confidence:** Weak topic overlap; different domains
 
-Sort groups by:
+Sort domains by:
 
-1. Total connections in group
-2. Average confidence
-3. Thematic coherence
+1. Total connections in domain
+2. Average confidence of connections
+3. Number of high-confidence suggestions
 
 ### Step 5: Present Grouped Suggestions
 
-Show top groups first:
+Show top domains first:
 
 ```
-Scanning vault for connection opportunities...
+Scanning wiki for connection opportunities...
 
-Found 23 potential link groups:
+Found 20 potential connections across 4 domains:
 
-📚 Group 1: Error Budget Theme (8 connections, high confidence)
+--- Domain: sre (12 connections) ---
 
-Notes mentioning error budgets without linking:
-1. "300 - Reference/SRE-Concepts/RTO and RPO.md"
-   → [[SLOs MOC]]
-   (mentions "error budget" 3 times)
+High confidence:
+1. [[circuit-breaker-pattern]] ↔ [[bulkhead-pattern]]
+   Shared topics: resilience, fault-tolerance, microservices
+   Neither article references the other.
 
-2. "300 - Reference/Reading/Book-Summaries/SRE Workbook.md"
-   → [[SLOs MOC]]
-   (mentions "error budget", "SLO")
+2. [[slo-burn-rate]] ↔ [[error-budget-policy]]
+   Shared topics: slo, reliability, error-budget
+   Neither article references the other.
 
-3. "100 - MOCs/SRE Concepts MOC.md"
-   → [[Error Budget Calculations]]
-   (section on SLOs missing this link)
+Medium confidence:
+3. [[incident-response]] ↔ [[postmortem-template]]
+   Shared topics: incidents
+   incident-response has no related: field.
 
-[... 5 more ...]
+[... more ...]
 
-Actions for Group 1:
-A) Apply all 8 connections
+Actions for sre domain:
+A) Add all 12 connections to related: frontmatter
 B) Review individually
-C) Skip group
+C) Skip domain
 ```
 
 ### Step 6: Handle User Selection
 
-#### Option A: Apply All
+#### Option A: Apply All in Domain
 
-Add all suggested links in group:
+For each connection pair, add bidirectional `related:` entries:
 
 ```
-Applying 8 connections...
+Applying 12 connections in sre domain...
 
-✅ Added [[SLOs MOC]] to "RTO and RPO.md"
-✅ Added [[SLOs MOC]] to "SRE Workbook.md"
-✅ Added [[Error Budget Calculations]] to "SRE Concepts MOC.md"
-[...]
+Updated related: frontmatter:
+  wiki/concepts/circuit-breaker-pattern.md — added [[bulkhead-pattern]]
+  wiki/concepts/bulkhead-pattern.md — added [[circuit-breaker-pattern]]
+  wiki/concepts/slo-burn-rate.md — added [[error-budget-policy]]
+  wiki/concepts/error-budget-policy.md — added [[slo-burn-rate]]
+  [...]
 
-✅ Group 1 complete (8 links added)
+12 connections applied (24 related: entries added).
 ```
 
 #### Option B: Review Individually
@@ -214,279 +171,212 @@ Applying 8 connections...
 Present each suggestion one by one:
 
 ```
-Connection 1 of 8:
-From: "300 - Reference/SRE-Concepts/RTO and RPO.md"
-To: [[SLOs MOC]]
-Reason: Both discuss error budgets
+Connection 1 of 12 (sre domain):
 
-Context:
-"RTO and RPO.md" mentions:
-"Error budgets help balance reliability and feature velocity..."
+  [[circuit-breaker-pattern]] ↔ [[bulkhead-pattern]]
 
-Add this link?
-A) Yes
-B) No
-C) Skip remaining
+  Shared topics: resilience, fault-tolerance, microservices
+
+  circuit-breaker-pattern.md current related:
+    - "[[retry-pattern]]"
+    - "[[timeout-pattern]]"
+
+  bulkhead-pattern.md current related:
+    - "[[load-shedding]]"
+
+  Add bidirectional link?
+  A) Yes — add to both
+  B) One-way only (A → B)
+  C) One-way only (B → A)
+  D) Skip
 ```
 
-#### Option C: Skip Group
+#### Option C: Skip Domain
 
-Move to next group.
+Move to next domain.
 
-### Step 7: Add Links
+### Step 7: Update Frontmatter
 
-For each approved connection, use **Edit** tool:
+For each approved connection, update the `related:` field in YAML frontmatter:
 
-```bash
-# First, read the file to see current structure
-obsidian read file="Target Note"
+```yaml
+# Before
+related:
+  - "[[retry-pattern]]"
+  - "[[timeout-pattern]]"
 
-# Check if "Related" section exists
-obsidian outline file="Target Note" format=md
-
-# If Related section exists, use Edit tool to add link:
-#   - Find "## Related" section
-#   - Add "- [[Link Target]]" under it
-#
-# If no Related section, use obsidian append:
-obsidian append file="Target Note" content="\n## Related\n\n- [[Link Target]]"
+# After
+related:
+  - "[[retry-pattern]]"
+  - "[[timeout-pattern]]"
+  - "[[bulkhead-pattern]]"
 ```
+
+Use the Edit tool to modify frontmatter. Preserve existing entries. Use kebab-case wikilinks.
 
 **Verify no duplicates:**
 
-```bash
-# Check link doesn't already exist
-obsidian links file="Target Note" format=json
-
-# Parse JSON array to check if "Link Target" is already present
-# If found, skip adding
+```
+Before adding [[bulkhead-pattern]] to circuit-breaker-pattern.md:
+  Check related: field does not already contain [[bulkhead-pattern]]
+  Check body does not already contain [[bulkhead-pattern]]
+  If duplicate found: skip silently
 ```
 
-### Step 8: Report Summary
+**Handle missing related: field:**
 
-After processing all groups:
+If an article has no `related:` field in frontmatter, add it:
 
-```
-📊 Link Discovery Complete
+```yaml
+# Before
+---
+title: Incident Response
+domain: [sre]
+maturity: mature
+confidence: high
+last_compiled: 2026-03-15
+---
 
-Groups reviewed: 5
-Links added: 23
-Files updated: 15
-
-By theme:
-- Error Budgets: 8 links
-- Incident Management: 5 links
-- Reliability Patterns: 7 links
-- Observability: 3 links
-
-Next steps:
-- Run /check-moc-health to verify MOC coverage
-- Review added links in Obsidian graph view
-```
-
-## Grouping Logic
-
-### Identify Themes
-
-Common SRE themes to detect:
-
-```
-ERROR_BUDGET_TERMS: "error budget" OR "slo" OR "sli" OR "availability" OR "uptime"
-INCIDENT_TERMS: "incident" OR "postmortem" OR "on-call" OR "pager" OR "runbook"
-RELIABILITY_TERMS: "circuit breaker" OR "bulkhead" OR "retry" OR "timeout" OR "fallback"
-OBSERVABILITY_TERMS: "metric" OR "log" OR "trace" OR "monitor" OR "alert"
-PERFORMANCE_TERMS: "latency" OR "throughput" OR "capacity" OR "scalability"
+# After
+---
+title: Incident Response
+domain: [sre]
+maturity: mature
+confidence: high
+related:
+  - "[[postmortem-template]]"
+last_compiled: 2026-03-15
+---
 ```
 
-Match files to themes using **obsidian search**:
+### Step 8: Check Domain Index Cross-References
 
-```bash
-# Check if file matches theme
-obsidian search query="error budget OR slo OR sli" format=json
+After updating article frontmatter, check if domain indexes should be updated:
 
-# Parse results to categorize files by theme
 ```
+Domain index cross-reference check:
+
+  wiki/_indexes/resilience.md:
+    Contains [[circuit-breaker-pattern]] but not [[bulkhead-pattern]]
+    Suggest adding [[bulkhead-pattern]] to resilience index? [Y/n]
+
+  wiki/_indexes/sre.md:
+    Both articles already present. No change needed.
+```
+
+### Step 9: Report Summary
+
+After processing all domains:
+
+```
+Link Discovery Complete
+
+  Domains reviewed: 4
+  Connections added: 18 (36 related: entries)
+  Articles updated: 22
+  Index updates suggested: 3
+
+  By domain:
+  - sre: 12 connections
+  - observability: 3 connections
+  - infrastructure: 2 connections
+  - company: 1 connection
+
+  Next steps:
+  - Run /check-moc-health to verify wiki health
+  - Review newly connected articles in Obsidian graph view
+```
+
+## Topic Extraction Logic
+
+### Identify Topics from Articles
+
+Extract topics using multiple signals:
+
+1. **Title:** Split kebab-case filename into terms
+2. **Frontmatter domain:** Use as topic category
+3. **Headings:** Extract H2/H3 heading text
+4. **Body keywords:** Match against known technical term patterns
+5. **Existing related:** Leverage existing connections to infer topics
 
 ### Co-occurrence Analysis
 
-Find terms that frequently appear together:
+Find terms that frequently appear together across articles:
 
-```bash
-# Count how often two terms appear in same file
-# Use obsidian search with AND operator
-obsidian search query="term1 AND term2" total
-
-# This returns count of files with both terms
-# High co-occurrence suggests thematic connection
 ```
-
-Example:
-
-```bash
-# How many files mention both "error budget" AND "SLO"?
-obsidian search query="error budget AND SLO" total
-# Output: 12
-
-# This indicates strong thematic relationship
+For each pair of terms:
+  Count how many articles contain both terms
+  High co-occurrence (3+ articles) → strong thematic connection
+  Use co-occurrence to boost confidence of connection suggestions
 ```
-
-## Link Quality Scoring
-
-### Calculate Confidence
-
-For each suggestion:
-
-```bash
-# Keyword frequency - count matches in specific file
-obsidian search query="topic" format=json
-# Parse to count occurrences in specific file
-
-# Context relevance - check if appears in headings
-obsidian outline file="Note" format=md
-# Parse markdown to see if topic appears in section headings
-
-# File proximity - check folder location
-obsidian info file="Note" format=json
-# Parse path to determine if files are in same folder
-
-# Confidence = frequency + (heading_match * 2) + proximity
-```
-
-**Thresholds:**
-
-- High: Confidence >= 5
-- Medium: Confidence 2-4
-- Low: Confidence 1
 
 ### Filter Low-Quality Suggestions
 
-Skip if:
+Skip suggestions if:
 
-- Topic mentioned only once in passing
-- Files are completely different domains
-- Already extensively linked (>10 links)
-
-```bash
-# Check if file is over-linked
-obsidian links file="Note" format=json total
-
-# If total > 15, file is well-connected
-# Only suggest high-confidence links
-```
-
-## Bidirectional Linking
-
-When adding link from A → B, consider adding B → A:
-
-```
-Found: "Circuit Breaker.md" mentions "Bulkhead Pattern" but doesn't link
-
-Add bidirectional links?
-A → B: [[Circuit Breaker]] → [[Bulkhead Pattern]]
-B → A: [[Bulkhead Pattern]] → [[Circuit Breaker]]
-
-Both are reliability patterns, bidirectional makes sense.
-
-Add both? [Y/n]
-```
-
-Check both directions:
-
-```bash
-# Check A → B
-obsidian links file="Circuit Breaker" format=json
-# Look for "Bulkhead Pattern" in links array
-
-# Check B → A
-obsidian links file="Bulkhead Pattern" format=json
-# Look for "Circuit Breaker" in links array
-
-# If neither exists, suggest bidirectional link
-```
+- Topic appears only once in passing in one of the articles
+- Articles are in completely different domains with no overlap
+- One article already has 10+ entries in `related:`
+- Both articles have `maturity: stub` (stubs linking to stubs adds noise)
 
 ## Special Cases
 
 ### No Missing Links Found
 
 ```
-✅ No missing connections found!
+No missing connections found.
 
-Your vault is well-linked. Great work!
+Your wiki is well-linked.
 
 Stats:
-- Total files: 156
-- Average links per file: 5.3
-- Well-connected: 92%
-```
-
-Calculate stats:
-
-```bash
-# Total files
-obsidian files total
-
-# For average links per file:
-# For each file:
-#   obsidian links file="X" total
-# Sum and divide by file count
+- Total articles: 47
+- Average related: entries per article: 3.8
+- Well-connected: 94%
 ```
 
 ### Too Many Suggestions
 
-If >50 suggestions:
+If more than 40 suggestions:
 
 ```
-Found 73 potential link groups
+Found 52 potential connections across 6 domains.
 
-That's a lot! Options:
-A) Show high-confidence only (23 groups)
-B) Show by theme (process one theme at a time)
+Options:
+A) Show high-confidence only (18 connections)
+B) Process one domain at a time
 C) Show all (will take a while)
 ```
 
-### Orphaned Files (No Links)
+### Orphaned Articles (No Links At All)
 
-Detect files with zero incoming or outgoing links using **lib/obsidian-operations.md**:
-
-```bash
-# Find orphaned files (no incoming or outgoing links)
-obsidian orphans format=json
-
-# Find dead-end files (no outgoing links)
-obsidian deadends format=json
-```
-
-Present orphans:
+Detect articles with zero incoming or outgoing links:
 
 ```
-⚠️  Found 3 orphaned files:
+Found 3 orphaned articles (no links in or out):
 
-- "300 - Reference/Tools/obscure-tool.md"
-  No links to or from this file
+- wiki/concepts/backpressure.md
+  Domain: [sre, resilience]
+  No related: field, no incoming wikilinks
 
-- "200 - Notes/old-thought.md"
-  No connections found
+- wiki/guides/log-aggregation-setup.md
+  Domain: [observability]
+  No related: field, no incoming wikilinks
 
 Options:
-A) Suggest connections for orphans
-B) Consider archiving (move to 400 - Archive/)
-C) Skip for now
+A) Find connections for orphans (prioritized search)
+B) Flag for manual review
+C) Skip
 ```
 
-### Files with Extensive Links
+### Articles with Extensive Links
 
-If file already has many links:
-
-```bash
-obsidian links file="SRE Concepts MOC" total
-# Returns: 24
-```
+If an article already has many related entries:
 
 ```
-ℹ️  "SRE Concepts MOC.md" already has 24 links
+wiki/concepts/microservices-patterns.md already has 12 related: entries.
 
-Adding more may reduce navigability.
-Only show high-confidence suggestions? [Y/n]
+Adding more may reduce signal quality.
+Only suggest high-confidence connections? [Y/n]
 ```
 
 ## Error Handling
@@ -494,119 +384,49 @@ Only show high-confidence suggestions? [Y/n]
 ### Read Permission Errors
 
 ```
-❌ Cannot read "file.md" (permission denied)
+Cannot read wiki/concepts/locked-file.md
 
 Skipping this file. Continue? [Y/n]
 ```
 
-### Invalid Link Targets
+### Frontmatter Parse Error
 
 ```
-⚠️  Link target doesn't exist: [[Non-existent Note]]
-
-This file might be referencing a note that should be created.
-
-Options:
-A) Create stub file
-B) Skip this link
-C) Report for later
-```
-
-Use:
-
-```bash
-# Check if target note exists
-obsidian info file="Non-existent Note" format=json
-# Will error if file doesn't exist
-
-# If creating stub:
-obsidian create file="Non-existent Note" content="# Non-existent Note\n\nStub note to be expanded.\n"
-```
-
-### Corrupted Files
-
-```
-❌ Cannot parse "file.md" (invalid markdown)
+Cannot parse frontmatter in wiki/concepts/malformed.md
 
 Skipping this file from link discovery.
+Flag for /check-moc-health to investigate? [Y/n]
+```
+
+### Empty Wiki
+
+```
+No wiki articles found in wiki/
+
+The wiki is empty. Start by creating articles with /create-note
+or by archiving a project with /archive-project (which extracts knowledge).
 ```
 
 ## Best Practices
 
-1. **Start with high-confidence groups** - Quick wins
+1. **Start with high-confidence suggestions** - Quick wins that clearly belong
 2. **Review before applying** - Especially for batch operations
-3. **Consider bidirectional links** - When contextually appropriate
-4. **Don't over-link** - Quality over quantity
-5. **Group thematically** - Easier to review
-6. **Check file context** - Link should make sense
-7. **Preserve file structure** - Add to appropriate sections
-8. **Report clearly** - Show what was added
-9. **Allow undo** - Keep backups
-10. **Run periodically** - After adding new content
-
-## Integration with Libraries
-
-This skill uses shared libraries:
-
-- **lib/obsidian-operations.md** - All CLI-based vault operations
-- **lib/analysis.md** - Content classification, topic extraction, MOC matching
-
-## Usage Examples
-
-### Example 1: High-Confidence Group
-
-```
-User: /discover-links
-
-Scanning vault...
-
-Found 3 link groups:
-
-📚 Group 1: SLO Theme (5 connections, high confidence)
-
-1. "Error Budget.md" → [[SLOs MOC]]
-2. "Uptime Calculations.md" → [[SLOs MOC]]
-3. "SRE Workbook Summary.md" → [[Error Budget]]
-[...]
-
-Apply all 5? [Y/n]
-
-✅ Added 5 links
-```
-
-### Example 2: Review Individually
-
-```
-📚 Group 2: Incident Management (3 connections, medium confidence)
-
-Actions:
-B) Review individually
-
-Connection 1 of 3:
-"Runbook Template.md" → [[Incident Roles]]
-
-Context: Both discuss incident response structure
-
-Add? [Y/n/s]
-```
-
-### Example 3: No Links Found
-
-```
-User: /discover-links
-
-Scanning vault...
-
-✅ No missing connections found!
-Your vault is well-linked (avg 5.2 links/file)
-```
+3. **Prefer bidirectional links** - If A relates to B, B relates to A
+4. **Don't over-link** - Quality over quantity in `related:` fields
+5. **Group by domain** - Easier to review thematically
+6. **Use kebab-case wikilinks** - Consistent with wiki naming convention
+7. **Check index coverage** - New connections may warrant index updates
+8. **Preserve existing entries** - Never remove existing `related:` entries
+9. **Skip stubs linking to stubs** - Wait until articles have substance
+10. **Run after adding content** - Best time is after batch article creation
 
 ## Related Skills
 
-- **/classify-inbox** - Add links when processing new files
-- **/check-moc-health** - Find orphans missing MOC connections
-- **/create-note** - Add links when creating notes
+- **/classify-inbox** - Add links when processing new raw items
+- **/check-moc-health** - Find orphans and validate wiki structure
+- **/create-note** - Create articles for detected gaps
+- **/archive-project** - Extract project knowledge with proper linking
 
 ## Summary
 
-The discover-links skill finds missing connections by analyzing shared topics, grouping suggestions thematically, and allowing interactive review before adding links. Improves vault connectivity systematically using Obsidian CLI commands for all vault operations.
+The discover-links skill finds missing connections between wiki articles by analyzing shared topics and suggesting `related:` frontmatter additions. Groups suggestions by domain for efficient review, supports bidirectional linking, and checks domain index coverage. Improves wiki connectivity systematically without touching article body content.

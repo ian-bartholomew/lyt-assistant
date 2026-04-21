@@ -1,648 +1,492 @@
 ---
 name: check-moc-health
-description: This skill should be used when the user asks to "check MOC health", "analyze MOC", "validate MOC", "check MOC quality", "audit MOC", "check for broken links in MOC", or wants to assess the quality and coverage of a Map of Content.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "check wiki health", "lint wiki", "health check", "audit wiki", "validate wiki", "check MOC health", "analyze MOC", "validate MOC", "check MOC quality", "audit MOC", "check for broken links", or wants to assess the quality and coverage of the wiki system.
+version: 0.2.0
+allowed-tools: [Read, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
-# Check MOC Health Skill
+# Wiki Health Check Skill
 
-Analyze MOC (Map of Content) quality and suggest improvements by checking structure, detecting broken links, finding missing coverage, and identifying stale references.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Audit the wiki system by validating indexes, checking links, enforcing frontmatter, detecting orphans and staleness, finding gaps, and verifying domain consistency.
 
 ## Purpose
 
-Maintain MOC quality by performing comprehensive audits that check link validity, identify orphaned notes that should be included, detect stale references, and verify structural integrity. Ensures MOCs remain effective organizational tools.
+Maintain wiki quality by performing comprehensive audits that check index coverage, validate links, enforce frontmatter schema, detect orphaned and stale articles, find topic gaps, and verify domain consistency. Ensures the wiki remains an accurate, navigable knowledge base.
 
 ## When to Use
 
 Invoke this skill when:
 
 - User explicitly runs `/check-moc-health`
-- User mentions checking, analyzing, auditing, or validating a MOC
-- User wants to find broken links in a MOC
-- User asks about MOC quality or coverage
-- After adding many new notes (to check if MOCs need updates)
-- As part of regular vault maintenance
+- User mentions checking, linting, auditing, or validating the wiki
+- User wants to find broken links in the wiki
+- User asks about wiki quality, health, or coverage
+- After adding many new articles (to check if indexes need updates)
+- As part of regular wiki maintenance
 
 ## Workflow Overview
 
-1. **Pre-flight check** - Verify Obsidian CLI connection
-2. **Select MOC** - Choose which MOC to analyze
-3. **Structure audit** - Check formatting and organization
-4. **Link validation** - Find broken links
-5. **Coverage analysis** - Find orphaned notes
-6. **Staleness detection** - Identify outdated references
-7. **Present report** - Interactive findings and options
-8. **Execute fixes** - Apply approved improvements
+1. **Scan wiki** - Build index of all wiki articles and domain indexes
+2. **Index health** - Verify every article appears in at least one domain index
+3. **Link validation** - Find broken wikilinks
+4. **Frontmatter validation** - Check required fields on all wiki articles
+5. **Orphan detection** - Find articles with no incoming links
+6. **Staleness detection** - Flag articles with `last_compiled` > 90 days ago
+7. **Gap analysis** - Find topics referenced but lacking their own page
+8. **Domain consistency** - Verify domain tags match index membership
+9. **Present report** - Interactive findings grouped by domain
+10. **Execute fixes** - Apply approved improvements
+11. **Log results** - Append to `wiki/_log.md`
 
 ## Process Flow
 
-### Step 0: Pre-flight Check
+### Step 1: Scan Wiki
 
-Verify Obsidian CLI connection before proceeding:
-
-```bash
-obsidian vault
-```
-
-If this fails, inform the user that the Obsidian CLI is not available and exit gracefully.
-
-### Step 1: Select MOC to Analyze
-
-Get all MOCs using Obsidian CLI:
+Build a complete picture of the wiki:
 
 ```bash
-obsidian files folder="100 - MOCs" ext=md
+# Get all wiki articles (excluding indexes, log, and attachments)
+ARTICLES=$(find wiki/ -name "*.md" \
+  -not -path "wiki/_indexes/*" \
+  -not -path "wiki/_attachments/*" \
+  -not -path "wiki/_log.md" \
+  -not -path "wiki/_index.md" \
+  -type f | sort)
+
+# Get all domain indexes
+INDEXES=$(find wiki/_indexes/ -name "*.md" -type f | sort)
 ```
 
-Present list to user:
+For each article, extract:
+
+- Frontmatter fields (title, domain, maturity, confidence, related, last_compiled)
+- All `[[wikilinks]]` in the body
+- Filename (kebab-case slug)
+
+For each domain index, extract:
+
+- All `[[wikilinks]]` it contains
+- Domain name (from filename or frontmatter)
+
+### Step 2: Index Health
+
+Verify every wiki article appears in at least one domain index.
 
 ```
-Which MOC should I analyze?
-
-1) SRE Concepts MOC
-2) Incident Management MOC
-3) Observability MOC
-
-Enter number or MOC name:
+For each article in wiki/:
+  Check if article filename appears as a [[wikilink]] in any file under wiki/_indexes/
+  If not found in any index: flag as "unindexed"
 ```
-
-**Alternative:** Accept MOC name as argument:
-
-```
-/check-moc-health SRE Concepts MOC
-```
-
-### Step 2: Read and Parse MOC
-
-Read MOC file using Obsidian CLI:
-
-```bash
-obsidian read file="SRE Concepts MOC"
-```
-
-Extract components:
-
-- Frontmatter (properties)
-- Headings (structure via `obsidian outline`)
-- Links (all [[target]] links via `obsidian links`)
-- Sections (organize by heading)
-
-### Step 3: Structure Audit
-
-Check MOC structure and formatting using Obsidian CLI:
-
-#### 3a. Heading Hierarchy
-
-Get heading structure:
-
-```bash
-obsidian outline file="SRE Concepts MOC"
-```
-
-Verify proper heading levels:
-
-- Should have clear hierarchy: #, ##, ###
-- Check for skipped levels (e.g., # → ###)
-- Count H1 headings (should be 1)
-
-**Good structure:**
-
-```markdown
-# SRE Concepts MOC
-
-## Reliability
-### Patterns
-### Metrics
-
-## Observability
-### Tools
-### Practices
-```
-
-**Bad structure:**
-
-```markdown
-# SRE Concepts MOC
-### Reliability  # Skipped H2
-# Another Title  # Multiple H1s
-```
-
-#### 3b. Section Organization
-
-Check if links are organized by section using the outline structure.
-
-**Good:**
-
-```markdown
-## Service Level Objectives
-
-- [[SLOs]]
-- [[SLIs]]
-- [[Error Budget]]
-
-## Incident Response
-
-- [[Incident Roles]]
-- [[Postmortem Template]]
-```
-
-**Bad (flat list):**
-
-```markdown
-# SRE Concepts MOC
-
-- [[SLOs]]
-- [[Incident Roles]]
-- [[Error Budget]]
-- [[Postmortem Template]]
-```
-
-#### 3c. Link Formatting
-
-Read the file content and check for malformed links using the Read tool:
-
-- Markdown links (should be wiki-style [[links]])
-- Unclosed links
 
 **Report:**
 
 ```
-📊 Structure Audit:
-✅ Has clear heading hierarchy
-✅ Links organized by section
-⚠️  Line 23: Malformed link [Example](url) - should be [[Example]]
+Index Health:
+  Total articles: 47
+  Indexed: 43
+  Unindexed: 4
+
+  Unindexed articles:
+  - wiki/concepts/backpressure.md (domain: [sre, resilience])
+  - wiki/guides/grafana-dashboard-setup.md (domain: [observability])
+  - wiki/concepts/toil-budget.md (domain: [sre])
+  - wiki/company/deploy-pipeline.md (domain: [infrastructure])
 ```
 
-### Step 4: Link Validation (Broken Links)
+### Step 3: Link Validation
 
-Check each link target exists using Obsidian CLI:
+Check every `[[wikilink]]` in wiki articles resolves to an existing file.
 
-```bash
-# Get all links from the MOC
-obsidian links file="SRE Concepts MOC"
-
-# For each link target, verify it exists
-obsidian file file="Target Note Name"
 ```
-
-Use `obsidian unresolved` to get vault-wide unresolved links, then filter for those in the MOC.
+For each article:
+  Extract all [[link-target]] references
+  For each link target:
+    Search for a file matching "link-target.md" anywhere in the vault
+    If not found: flag as broken link
+```
 
 **Report:**
 
 ```
-📊 Link Validation:
-Total links: 34
-Valid: 31
-Broken: 3
+Link Validation:
+  Total wikilinks scanned: 203
+  Valid: 196
+  Broken: 7
 
-⚠️  Broken links found:
-  - [[Bulkhead Pattern]] (line 15)
-  - [[Circuit Breaker]] (line 18)
-  - [[Golden Signals]] (line 42)
-
-These references don't exist in vault.
+  Broken links:
+  - wiki/concepts/circuit-breaker-pattern.md line 23: [[rate-limiting]] (no file)
+  - wiki/guides/incident-response.md line 15: [[escalation-matrix]] (no file)
+  - wiki/concepts/slo-burn-rate.md line 8: [[error-budget-policy]] (no file)
+  [... 4 more ...]
 ```
 
-### Step 5: Coverage Analysis (Missing Notes)
+### Step 4: Frontmatter Validation
 
-Find notes that should be in MOC but aren't using the analysis library.
+All wiki articles must have these required frontmatter fields:
 
-#### 5a. Identify MOC Topics
+- `title` (string)
+- `domain` (list of strings)
+- `maturity` (one of: stub, draft, mature, authoritative)
+- `confidence` (one of: low, medium, high)
+- `last_compiled` (date in YYYY-MM-DD format)
 
-Use `lib/analysis.md` functions:
-
-- Extract topics from MOC title and sections
-- Use heading extraction to identify themes
-
-```bash
-# Get section headings
-obsidian outline file="SRE Concepts MOC"
 ```
-
-Extract keywords: "SRE", "reliability", "observability", "incidents"
-
-#### 5b. Find Related Orphans
-
-Use `lib/analysis.md` matching functions:
-
-1. Get all links currently in the MOC:
-
-```bash
-obsidian links file="SRE Concepts MOC"
+For each article:
+  Parse YAML frontmatter
+  Check each required field exists and has a valid value
+  Flag any missing or invalid fields
 ```
-
-1. Search for notes matching MOC topics:
-
-```bash
-obsidian search query="reliability" path="200 - Notes"
-obsidian search query="sre" path="300 - Reference"
-```
-
-1. Get orphaned notes:
-
-```bash
-obsidian orphans
-```
-
-1. Cross-reference: find notes that match topics but aren't linked from MOC
 
 **Report:**
 
 ```
-📦 Coverage Analysis:
-Missing from MOC but should be included (8 notes):
+Frontmatter Validation:
+  Total articles: 47
+  Valid: 41
+  Issues: 6
 
-High confidence:
-  - "Exponential Backoff.md" (in Reference/SRE-Concepts/, mentions reliability)
-  - "Load Shedding.md" (in Reference/SRE-Concepts/, mentions patterns)
+  Frontmatter issues:
+  - wiki/concepts/backpressure.md: missing "confidence" field
+  - wiki/guides/grafana-dashboard-setup.md: missing "last_compiled" field
+  - wiki/concepts/toil-budget.md: "maturity" has invalid value "wip" (expected: stub|draft|mature|authoritative)
+  - wiki/company/deploy-pipeline.md: missing "domain" field
+  [... 2 more ...]
+```
 
-Medium confidence:
-  - "Graceful Degradation.md" (mentions reliability, in Notes/)
-  - "Latency Budgets.md" (related to SLOs)
+### Step 5: Orphan Detection
 
-[... 4 more ...]
+Find wiki articles with no incoming links from other wiki articles or indexes.
+
+```
+For each article:
+  Count how many other files contain [[article-slug]] as a wikilink
+  If count == 0: flag as orphan
+```
+
+**Report:**
+
+```
+Orphan Detection:
+  Total articles: 47
+  Well-connected: 39
+  Orphans (no incoming links): 8
+
+  Orphaned articles:
+  - wiki/concepts/backpressure.md (0 incoming links)
+  - wiki/concepts/toil-budget.md (0 incoming links)
+  [... 6 more ...]
 ```
 
 ### Step 6: Staleness Detection
 
-Check for links to archived or outdated content:
+Flag articles where `last_compiled` is more than 90 days ago.
 
-#### 6a. Archived References
-
-Check if any MOC links point to Archive:
-
-```bash
-# For each link target, check its location
-obsidian file file="Target Note"
-# Check if path contains "400 - Archive"
 ```
-
-Or search for archived content:
-
-```bash
-obsidian search query="term" path="400 - Archive"
+For each article:
+  Read last_compiled from frontmatter
+  Calculate days since last_compiled
+  If > 90 days: flag as stale
 ```
-
-#### 6b. Old Content
-
-Check last modified dates using `obsidian file`:
-
-```bash
-# For each link target
-obsidian file file="Target Note"
-# Examine the modified date in the output
-```
-
-Calculate age and flag notes not updated in >365 days.
 
 **Report:**
 
 ```
-🕰️  Staleness Detection:
-✅ No archived references
-ℹ️  2 notes not updated in >6 months:
-  - [[Old Pattern.md]] (412 days)
-  - [[Deprecated Tool.md]] (523 days)
+Staleness Detection:
+  Fresh (< 30 days): 28
+  Aging (30-90 days): 12
+  Stale (> 90 days): 7
 
-Consider reviewing these for relevance.
-```
-
-### Step 7: Present Comprehensive Report
-
-Combine all findings:
-
-```
-Analyzing "SRE Concepts MOC.md"...
-
-📊 Structure Audit:
-✅ Has clear sections
-✅ Uses proper heading hierarchy
-⚠️  3 broken links found:
-  - [[Bulkhead Pattern]]
-  - [[Circuit Breaker]]
-  - [[Golden Signals]]
-
-📦 Coverage Analysis:
-Missing from MOC but should be included (8 notes):
-  - "Exponential Backoff.md" (high confidence)
-  - "Load Shedding.md" (high confidence)
-  - "Graceful Degradation.md" (medium confidence)
+  Stale articles:
+  - wiki/concepts/circuit-breaker-pattern.md (last compiled 2025-12-15 — 124 days ago)
+  - wiki/guides/terraform-state-migration.md (last compiled 2025-11-20 — 149 days ago)
   [... 5 more ...]
-
-🕰️  Staleness Detection:
-✅ No archived references
-ℹ️  2 notes not updated in >6 months
-
-Would you like to:
-A) Create missing notes (Bulkhead Pattern, Circuit Breaker, Golden Signals)
-B) Add missing references to MOC (8 notes)
-C) Generate detailed report (save as markdown)
-D) Fix broken links (remove them)
-E) Fix all issues automatically
-F) Review each issue individually
 ```
 
-### Step 8: Execute Fixes
+### Step 7: Gap Analysis
 
-Handle user selection:
-
-#### Option A: Create Missing Notes
-
-For each broken link, create stub file using Obsidian CLI:
-
-```bash
-obsidian create file="Bulkhead Pattern" path="200 - Notes"
-
-# Set properties
-obsidian property:set file="Bulkhead Pattern" property=created value="2026-04-13"
-obsidian property:set file="Bulkhead Pattern" property=tags value="[]"
-obsidian property:set file="Bulkhead Pattern" property=mocs value="[[SRE Concepts MOC]]"
-```
-
-Then use Edit tool to add initial content:
-
-```markdown
-# Bulkhead Pattern
-
-[Content to be added]
-
-## Related
-
-- [[SRE Concepts MOC]]
-```
-
-#### Option B: Add Missing References
-
-Add orphaned notes to MOC using Edit tool:
-
-```bash
-# Read the MOC
-obsidian read file="SRE Concepts MOC"
-```
-
-Use Edit tool to add links in appropriate sections:
-
-```markdown
-## Related Notes
-
-- [[Exponential Backoff]]
-- [[Load Shedding]]
-```
-
-#### Option C: Generate Detailed Report
-
-Create markdown report file using Obsidian CLI:
-
-```bash
-obsidian create file="MOC Health Report - SRE Concepts MOC - 2026-04-13" path="000 - Inbox"
-```
-
-Then use Edit tool to populate:
-
-```markdown
-# MOC Health Report: SRE Concepts MOC
-**Date:** 2026-04-13
-
-## Summary
-- Total links: 34
-- Broken links: 3
-- Missing coverage: 8 notes
-- Stale references: 2
-
-## Broken Links
-1. [[Bulkhead Pattern]] (line 15)
-   - Status: File doesn't exist
-   - Action: Create stub or remove link
-
-[... detailed report ...]
-```
-
-#### Option D: Fix Broken Links
-
-Remove broken links using Edit tool:
-
-```bash
-# Read the MOC
-obsidian read file="SRE Concepts MOC"
-```
-
-Use Edit tool to remove or comment out broken link lines:
-
-```markdown
-# - [[Bulkhead Pattern]]  # TODO: Create this note
-```
-
-#### Option E: Fix All Automatically
-
-Comprehensive auto-fix:
-
-1. Create stub files for broken links (Option A)
-2. Add high-confidence orphans to MOC (Option B)
-3. Comment out stale references (Edit tool)
-4. Generate report (Option C)
-
-#### Option F: Review Individually
-
-Walk through each issue with AskUserQuestion:
+Find topics that are referenced in wiki articles (as wikilinks or in `related:` frontmatter) but don't have their own page.
 
 ```
-Issue 1 of 13:
-⚠️  Broken link: [[Bulkhead Pattern]]
+For each broken link or unresolved related entry:
+  If the target looks like it belongs in wiki/ (kebab-case, topical name):
+    Flag as a gap — a topic that should have its own article
+```
 
-Context: Under "## Reliability Patterns" section
+**Report:**
+
+```
+Gap Analysis:
+  Topic gaps detected: 5
+
+  Topics referenced but lacking a page:
+  - "rate-limiting" — referenced by 3 articles
+  - "escalation-matrix" — referenced by 2 articles
+  - "error-budget-policy" — referenced by 4 articles
+  - "canary-deployment" — referenced by 1 article
+  - "feature-flag-rollout" — referenced by 1 article
+```
+
+### Step 8: Domain Consistency
+
+Verify that each article's `domain:` frontmatter tags match the domain indexes it appears in.
+
+```
+For each article:
+  Get domain tags from frontmatter (e.g., [sre, resilience])
+  Get which indexes actually list this article
+  Flag mismatches:
+    - Article claims domain "resilience" but does not appear in resilience index
+    - Article appears in "observability" index but domain field doesn't include it
+```
+
+**Report:**
+
+```
+Domain Consistency:
+  Consistent: 40
+  Mismatches: 7
+
+  Domain mismatches:
+  - wiki/concepts/circuit-breaker-pattern.md
+    Frontmatter domains: [sre, resilience]
+    Indexed in: [sre]
+    Missing from index: resilience
+
+  - wiki/guides/grafana-dashboard-setup.md
+    Frontmatter domains: [observability]
+    Indexed in: [observability, infrastructure]
+    Extra index: infrastructure (not in domain field)
+```
+
+### Step 9: Present Comprehensive Report
+
+Combine all findings, grouped by domain:
+
+```
+Wiki Health Check — 2026-04-17
+
+Overall:  43/47 articles healthy (91%)
+
+  Index Health:      43/47 indexed
+  Link Validation:   196/203 links valid (7 broken)
+  Frontmatter:       41/47 valid (6 issues)
+  Orphans:           8 articles with no incoming links
+  Staleness:         7 articles stale (> 90 days)
+  Gaps:              5 topics need pages
+  Consistency:       7 domain mismatches
+
+--- By Domain ---
+
+sre (18 articles):
+  Broken links: 2
+  Stale: 3
+  Orphans: 1
+  Gaps: error-budget-policy, rate-limiting
+
+observability (12 articles):
+  All healthy
+
+resilience (8 articles):
+  Unindexed: 1
+  Broken links: 1
+
+[... other domains ...]
 
 Actions:
-A) Create stub file
-B) Remove link
-C) Skip
-D) Manual fix (I'll guide you)
+A) Auto-fix all (add to indexes, create stubs for gaps, fix frontmatter)
+B) Fix critical issues only (broken links, missing indexes)
+C) Review each issue individually
+D) Generate report only (no changes)
 ```
 
-### Step 9: Report Results
+### Step 10: Execute Fixes
+
+#### Auto-fix: Add Missing Articles to Indexes
+
+For each unindexed article, add it to the appropriate domain index based on its `domain:` frontmatter:
+
+```bash
+# Add [[backpressure]] to wiki/_indexes/sre.md and wiki/_indexes/resilience.md
+```
+
+#### Auto-fix: Create Stubs for Broken Links
+
+For each broken link that represents a gap, create a stub article:
+
+```yaml
+---
+title: Rate Limiting
+domain: [sre, resilience]
+maturity: stub
+confidence: low
+related:
+  - "[[circuit-breaker-pattern]]"
+last_compiled: 2026-04-17
+---
+
+# Rate Limiting
+
+*This article is a stub. It was auto-generated because 3 articles reference this topic.*
+
+## Referenced By
+
+- [[circuit-breaker-pattern]]
+- [[load-shedding]]
+- [[api-gateway-patterns]]
+```
+
+Place stubs in the appropriate wiki subfolder (concepts/, guides/, company/).
+
+#### Auto-fix: Repair Frontmatter
+
+For articles with missing fields, add defaults:
+
+- Missing `confidence`: set to `low`
+- Missing `last_compiled`: set to today's date
+- Missing `domain`: infer from which index contains the article, or set to `[uncategorized]`
+- Invalid `maturity`: prompt user to choose valid value
+
+#### Manual Review
+
+Walk through each issue one by one:
 
 ```
-✅ MOC Health Check Complete
+Issue 1 of 27:
+  Unindexed: wiki/concepts/backpressure.md
+  Domains: [sre, resilience]
 
-Actions taken:
-- Created 3 stub files
-- Added 5 missing notes to MOC
-- Commented out 2 stale references
-- Generated detailed report
+  Actions:
+  A) Add to sre and resilience indexes
+  B) Skip
+  C) Change domain tags
+```
 
-Updated MOC:
-- Total links: 39 (was 34)
-- Broken links: 0 (was 3)
-- Coverage improved: 13 additional notes linked
+### Step 11: Log Results
 
-Next steps:
-- Fill in content for stub files
-- Review stale references
-- Run /discover-links to find more connections
+Append results to `wiki/_log.md`:
+
+```markdown
+## [2026-04-17] lint | Wiki Health Check
+
+- **Articles scanned:** 47
+- **Issues found:** 27
+- **Issues fixed:** 23
+- **Remaining:** 4 (manual review needed)
+- Breakdown:
+  - Index: 4 unindexed → 4 added to indexes
+  - Links: 7 broken → 5 stubs created, 2 skipped
+  - Frontmatter: 6 invalid → 6 fixed
+  - Orphans: 8 detected → flagged for review
+  - Stale: 7 articles → flagged for recompilation
+  - Gaps: 5 topics → 5 stubs created
+  - Consistency: 7 mismatches → 7 resolved
 ```
 
 ## Special Cases
 
-### Perfect MOC
+### Healthy Wiki
 
 ```
-✅ "SRE Concepts MOC" is healthy!
+Wiki Health Check — 2026-04-17
 
-Structure: ✅ Excellent
-Links: ✅ All valid (34/34)
-Coverage: ✅ Good (no orphans detected)
-Freshness: ✅ All references current
+All 47 articles healthy.
 
-No issues found. Great job maintaining this MOC!
+  Index Health:      47/47 indexed
+  Link Validation:   203/203 links valid
+  Frontmatter:       47/47 valid
+  Orphans:           0
+  Staleness:         0 stale
+  Gaps:              0
+  Consistency:       All domains consistent
+
+No issues found. The wiki is in great shape.
 ```
 
-### No MOCs in Vault
+### Empty Wiki
 
 ```
-ℹ️  No MOCs found in 100 - MOCs/
+No wiki articles found in wiki/
 
-MOCs are organizational notes that link related content.
-Create your first MOC? [Y/n]
-
-Suggested: "Home MOC" (main entry point)
+The wiki is empty. Start by creating articles with /create-note
+or by archiving a project with /archive-project (which extracts knowledge).
 ```
 
-### Empty or Minimal MOC
+### No Domain Indexes
 
 ```
-⚠️  "New MOC" has only 2 links
+No domain indexes found in wiki/_indexes/
 
-This MOC might be underdeveloped.
+Creating default index structure...
 
-Options:
-A) Find related notes to add
-B) Keep as minimal MOC
-C) Delete and redistribute links
-```
+Created:
+- wiki/_indexes/sre.md
+- wiki/_indexes/observability.md
+- wiki/_indexes/infrastructure.md
 
-### Circular MOC References
-
-```
-ℹ️  Detected MOC loop:
-"SRE Concepts MOC" → "Reliability MOC" → "SRE Concepts MOC"
-
-This is valid (MOCs can reference each other) but verify it's intentional.
-```
-
-## Error Handling
-
-### MOC File Not Found
-
-```
-❌ MOC not found: "Nonexistent MOC"
-
-Available MOCs:
-- SRE Concepts MOC
-- Incident Management MOC
-- Observability MOC
-
-Choose from list? [Y/n]
-```
-
-### Obsidian CLI Connection Error
-
-```
-❌ Cannot connect to Obsidian CLI
-
-Please ensure:
-1. Obsidian is running
-2. Local REST API plugin is enabled
-3. API token is configured
-
-Try again? [Y/n]
+Re-running health check...
 ```
 
 ### Too Many Issues
 
 ```
-⚠️  Found 47 issues in this MOC
+Found 83 issues across 47 articles.
 
-That's a lot! Process in stages:
-A) Fix critical issues first (broken links)
+Processing in stages:
+A) Fix critical issues first (broken links, missing indexes)
 B) Fix all automatically
 C) Generate report for manual review
 ```
 
+## Error Handling
+
+### Wiki Directory Not Found
+
+```
+wiki/ directory not found.
+
+The wiki system has not been initialized.
+Create the wiki structure? [Y/n]
+```
+
+### Index File Corrupted
+
+```
+Cannot parse wiki/_indexes/sre.md — invalid markdown structure.
+
+Options:
+A) Rebuild index from article domain tags
+B) Skip this index
+C) Show file contents for manual review
+```
+
+### Frontmatter Parse Error
+
+```
+Cannot parse frontmatter in wiki/concepts/backpressure.md
+
+The YAML frontmatter may be malformed. Skipping this file.
+```
+
 ## Best Practices
 
-1. **Run regularly** - Monthly MOC health checks
-2. **Prioritize broken links** - Fix first
-3. **Review orphans carefully** - Not all belong
-4. **Maintain structure** - Keep sections organized
-5. **Clean stale content** - Archive old references
-6. **Create stubs thoughtfully** - Add meaningful placeholders
-7. **Don't over-populate** - MOC with 50+ links may need splitting
-8. **Use sections** - Group related topics
-9. **Link to sub-MOCs** - When appropriate
-10. **Document in report** - Keep records of changes
-
-## Integration with Libraries
-
-This skill uses shared libraries:
-
-- **lib/obsidian-operations.md** - All CLI-based vault operations
-- **lib/analysis.md** - Content classification, topic extraction, MOC matching
-
-## Usage Examples
-
-### Example 1: Healthy MOC
-
-```
-User: /check-moc-health SRE Concepts MOC
-
-Analyzing "SRE Concepts MOC.md"...
-
-✅ MOC is healthy!
-Structure: ✅ Links: ✅ (34/34 valid)
-Coverage: ✅ Freshness: ✅
-
-No issues found.
-```
-
-### Example 2: Broken Links
-
-```
-Analyzing "Reliability MOC.md"...
-
-⚠️  3 broken links:
-  - [[Circuit Breaker]]
-  - [[Bulkhead Pattern]]
-  - [[Golden Signals]]
-
-Create stub files? [Y/n]
-
-✅ Created 3 stubs
-✅ MOC now healthy
-```
-
-### Example 3: Coverage Gaps
-
-```
-📦 Coverage Analysis:
-8 related notes not in MOC:
-  - "Exponential Backoff.md"
-  - "Load Shedding.md"
-  [...]
-
-Add these to MOC? [Y/n]
-
-✅ Added 8 notes
-✅ MOC coverage improved
-```
+1. **Run regularly** - Weekly or after bulk wiki changes
+2. **Prioritize broken links** - These degrade navigation immediately
+3. **Fix frontmatter first** - Valid metadata enables all other checks
+4. **Review orphans carefully** - Some may be intentionally standalone
+5. **Address staleness** - Stale articles erode trust in the wiki
+6. **Fill gaps** - Even stubs are better than broken links
+7. **Keep domains consistent** - Tags and indexes must agree
+8. **Log every run** - The wiki log provides audit history
+9. **Auto-fix when safe** - Index additions and stub creation are low-risk
+10. **Manual review when uncertain** - Domain changes and deletions need judgment
 
 ## Related Skills
 
-- **/discover-links** - Find connections between notes
-- **/classify-inbox** - Add notes to MOCs
-- **/create-note** - Create notes referenced by MOCs
+- **/discover-links** - Find connections between wiki articles
+- **/classify-inbox** - Process raw items into wiki
+- **/create-note** - Create wiki articles for detected gaps
+- **/archive-project** - Extract project knowledge into wiki
 
 ## Summary
 
-The check-moc-health skill performs comprehensive MOC audits by validating structure, checking links, finding missing coverage, and detecting stale references. Provides interactive fixing with detailed reporting. Uses Obsidian CLI for all vault operations.
+The wiki health check skill performs comprehensive audits of the wiki system by validating indexes, links, frontmatter, orphans, staleness, gaps, and domain consistency. Provides interactive fixing with detailed reporting, logs all results to `wiki/_log.md`, and can auto-fix low-risk issues like missing index entries and stub creation.

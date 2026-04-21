@@ -1,132 +1,65 @@
 ---
 name: create-note
-description: This skill should be used when the user asks to "create a note", "create new note", "make a note", "write a note", "add a note", or wants guided note creation assistance. Provides interactive note creation with proper structure, classification, and linking.
-version: 1.0.0
-allowed-tools: [Bash, Edit, AskUserQuestion]
+description: This skill should be used when the user asks to "create a note", "create new note", "make a note", "write a note", "add a note", "create an article", "write an article", or wants guided wiki article creation. Provides interactive creation with proper structure, classification, domain tagging, and index updates.
+version: 0.2.0
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
 # Create Note Skill
 
-Guided creation of properly structured Notes or Reference files with appropriate links, frontmatter, and MOC associations.
+Guided creation of wiki articles in the appropriate `wiki/` subfolder with proper frontmatter, domain tags, related links, index updates, and compile log entries.
 
 ## Purpose
 
-Help create new notes with correct structure, classification, linking, and organization following LYT principles. Distinguishes between Notes (personal insights) and Reference (external information), suggests appropriate titles, and establishes connections to existing vault content.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Help create new wiki articles with correct structure, classification, linking, and organization. Articles are LLM-compiled knowledge organized by type: concepts (what is X?), guides (how do I X?), company (how does our org do X?), and learning (what did I learn from X?).
 
 ## When to Use
 
 Invoke this skill when:
 
 - User explicitly runs `/create-note`
-- User asks to create, write, or add a new note
+- User asks to create, write, or add a new note or article
 - User mentions making a new file for the vault
 - User wants help structuring new content
 
 ## Workflow Overview
 
-1. **Validate vault** - Pre-flight check and LYT structure validation
-2. **Determine source** - Existing content or start from scratch
-3. **Analyze content** - Classify type and extract topics
-4. **Suggest structure** - Title, destination, links
-5. **Review and edit** - Interactive refinement
-6. **Create file** - Write with proper frontmatter and links
+1. **Determine source** - Existing content or start from scratch
+2. **Analyze content** - Classify type and extract domains
+3. **Suggest structure** - Title, destination, related links
+4. **Review and edit** - Interactive refinement
+5. **Create file** - Write with proper frontmatter and links
+6. **Update index and log** - Maintain wiki/_indexes/ and wiki/_log.md
 
 ## Process Flow
 
-### Step 1: Pre-flight Check and Validate
-
-Before any vault operation, verify Obsidian is running:
-
-```bash
-obsidian vault
-```
-
-If this fails, present to the user:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-Use **AskUserQuestion** to get their choice.
-
-Once Obsidian is confirmed running, validate LYT vault structure:
-
-```bash
-obsidian folders
-```
-
-Verify output contains all required LYT folders: `000 - Inbox`, `100 - MOCs`, `150 - Projects`, `200 - Notes`, `300 - Reference`, `400 - Archive`.
-
-If any are missing:
-
-```
-⚠️  Missing LYT directories: [list missing folders]
-This doesn't appear to be a complete LYT vault.
-```
-
-Exit if critical folders are missing.
-
-### Step 2: Determine Content Source
+### Step 1: Determine Content Source
 
 Ask user about starting point:
 
 ```
-Let me help you create a note.
+Let me help you create a wiki article.
 
 Do you have content already, or should I help you structure something new?
-A) I have content in inbox
+A) I have content in raw/
 B) I have content elsewhere
 C) Start from scratch with a topic
 ```
 
 Handle each option:
 
-#### Option A: Content in Inbox
-
-List inbox files:
+#### Option A: Content in raw/
 
 ```bash
-obsidian files folder="000 - Inbox" ext=md
+# Scan raw/ for recent files
+find raw -type f -name "*.md" -maxdepth 2 | head -20
 ```
 
-Present list to user:
-
-```
-Select a file from inbox:
-1) random thoughts on circuit breakers.md
-2) error budget notes.md
-3) terraform state docs.md
-```
-
-Use **AskUserQuestion** to get selection, then read selected file:
-
-```bash
-obsidian read file="[selected file name]"
-```
-
-Proceed to analysis.
+Present list and read selected file for analysis.
 
 #### Option B: Content Elsewhere
 
-Ask for file path and read content:
-
-```bash
-obsidian read file="[user-provided file name]"
-```
-
-If file not found, try searching:
-
-```bash
-obsidian search query="[partial file name]" limit=5
-```
-
-Proceed to analysis.
+Ask for file path and read content.
 
 #### Option C: Start from Scratch
 
@@ -137,88 +70,82 @@ What topic or concept would you like to write about?
 
 Examples:
 - "Circuit breakers prevent cascading failures"
-- "Error budgets enable feature velocity"
-- "Kubernetes service mesh patterns"
+- "How to configure Terraform remote state"
+- "Our team's deployment pipeline"
+- "Lessons from the Q1 incident review"
 ```
 
-Use **AskUserQuestion** to get topic, then suggest template based on likely type (Note vs Reference).
+### Step 2: Analyze Content
 
-### Step 3: Analyze Content
-
-Use **lib/analysis.md** instructions for classification:
-
-**Read file content:**
-
-```bash
-obsidian read file="Note Name"
-```
-
-**Classify as Note, Reference, or Project** based on:
-
-- First-person language, assertion titles → Note
-- External quotes, code blocks, source attribution → Reference
-- Action items, deadlines, deliverables → Project
-
-**Extract topics and themes** from content and headings:
-
-```bash
-obsidian outline file="Note Name" format=md
-```
-
-**Assess atomicity:**
-
-```bash
-obsidian wordcount file="Note Name" words
-obsidian outline file="Note Name" total
-```
-
-- Under 500 words: Good for a Note
-- Over 500 words: May be Reference or needs splitting
-- More than 4 headings: May cover multiple topics
-
-**Determine confidence level** (High/Medium/Low).
-
-**Output format:**
+Determine article type by examining the content:
 
 ```
 Analyzing content...
 
-📄 Content Analysis:
-- Type: Note (personal insight)
-- Topics: circuit breakers, reliability, fault tolerance
-- Word count: 287
-- Atomicity: Single concept (3 sections)
-- Confidence: High
-- Reasoning: First-person synthesis, assertion-style
+Content Analysis:
+- Type: concept
+- Domains: sre, resilience
+- Maturity: draft
+- Confidence: medium
+- Reasoning: Explains what circuit breakers are and why they matter
 ```
 
-If project detected, suggest using `/create-project` for proper hub creation.
+### Step 3: Classify Article Type
 
-### Step 4: Suggest Title
+Classify into one of four wiki categories:
 
-For **Notes** (200 - Notes/):
+| Type | Question it answers | Destination |
+|------|-------------------|-------------|
+| **concept** | What is X? | `wiki/concepts/` |
+| **guide** | How do I X? | `wiki/guides/` |
+| **company** | How does our org do X? | `wiki/company/` |
+| **learning** | What did I learn from X? | `wiki/learning/` |
 
-Suggest assertion-style title following pattern: `[Subject] [verb] [outcome]`
+**Concept indicators:**
 
-Examples:
+- Defines or explains a term, pattern, or principle
+- General knowledge not specific to one org
+- Assertion-style insight
 
-- "Circuit breakers prevent cascading failures"
-- "Error budgets enable feature velocity"
-- "Bulkhead pattern isolates component failures"
+**Guide indicators:**
 
-For **References** (300 - Reference/):
+- Step-by-step instructions
+- How-to content
+- Commands, configuration, procedures
 
-Suggest descriptive title:
+**Company indicators:**
 
-- "Terraform State Management Guide"
-- "Kubernetes Service Mesh Comparison"
-- "PostgreSQL Performance Tuning"
+- References internal systems, teams, or processes
+- Architecture decisions specific to the org
+- Onboarding or org-specific runbooks
 
-Present suggestion:
+**Learning indicators:**
+
+- Post-mortem reflections
+- Conference or course takeaways
+- Personal lessons from experience
+
+**When ambiguous:**
 
 ```
-📝 Suggested Title:
-   "Circuit breakers prevent cascading failures"
+This content could be:
+- concept: It explains a general principle
+- guide: It contains step-by-step instructions
+
+Help me decide:
+1. Is this general knowledge or specific instructions?
+2. Would someone outside your org find this useful as-is?
+3. Is the core value "understanding" or "doing"?
+```
+
+### Step 4: Suggest Title and Filename
+
+Generate a clear, descriptive title and its kebab-case filename:
+
+```
+Suggested Title: "Circuit Breaker Pattern"
+Filename: circuit-breaker-pattern.md
+Destination: wiki/concepts/circuit-breaker-pattern.md
 
 Would you like to:
 A) Use this title
@@ -226,331 +153,303 @@ B) Edit title
 C) Keep original
 ```
 
-Use **AskUserQuestion** to get their choice.
+**Filename rules:**
 
-### Step 5: Suggest Destination
+- Always kebab-case (lowercase, hyphens)
+- No spaces, no special characters
+- Concise but descriptive
+- Example: `circuit-breaker-pattern.md`, `terraform-remote-state-setup.md`
 
-Based on classification:
+### Step 5: Assign Domains
 
-**For Notes:**
+Suggest domain tags based on content:
 
 ```
-📁 Suggested Destination:
-   200 - Notes/Circuit breakers prevent cascading failures.md
+Suggested Domains: [sre, resilience]
+
+Common domains: sre, infrastructure, terraform, kubernetes, observability,
+reliability, networking, security, ci-cd, professional-development, leadership
+
+Would you like to:
+A) Accept these domains
+B) Edit domain list
 ```
 
-**For References:**
+### Step 6: Suggest Related Links
 
-Use **lib/analysis.md** to match topics to Reference subfolders:
+Search wiki/ for related content:
 
 ```bash
-obsidian folders folder="300 - Reference"
+# Search for related articles in wiki/
+grep -rl "circuit.breaker\|resilience\|fault.tolerance" wiki/ --include="*.md" | head -10
 ```
 
-Compare extracted topics against folder names. Present suggestion:
+Present suggestions using kebab-case wikilinks:
 
 ```
-📁 Suggested Destination:
-   300 - Reference/SRE-Concepts/Circuit Breaker Pattern.md
-
-Available alternatives:
-- 300 - Reference/Reliability-Patterns/
-- 300 - Reference/Tools/
+Suggested Related Links:
+  - [[bulkhead-pattern]]
+  - [[graceful-degradation]]
+  - [[exponential-backoff]]
 ```
 
-If no good match exists:
-
-```
-Topics [new-topic] don't match existing folders.
-
-Options:
-A) Create new folder: "300 - Reference/new-topic/"
-B) Place in closest match: "300 - Reference/SRE-Concepts/"
-C) Specify custom location
-```
-
-### Step 6: Suggest MOC Links
-
-Use **lib/analysis.md** instructions for MOC matching:
-
-**Get all MOCs:**
-
-```bash
-obsidian files folder="100 - MOCs" ext=md
-```
-
-**For each MOC, calculate score:**
-
-- **Keyword match (weight: 2x):** Read MOC content and count topic overlaps
-- **Link overlap (weight: 1x):** Get MOC links and count overlaps with content topics
-- **Title match (weight: 3x):** Check if MOC title contains any content topic
-
-**Assign confidence:**
-
-- **High (score >= 5):** Multiple keyword matches, clear thematic fit
-- **Medium (score 2-4):** Some matches, related but not primary
-- **Low (score 1):** Weak connection
-
-**Present suggestions:**
-
-```
-🗺️  Suggested MOCs:
-  - [[Reliability Patterns MOC]] (high confidence) — 3 keyword matches, title match
-  - [[SRE Concepts MOC]] (medium confidence) — 1 keyword match, parent MOC
-```
-
-**Check for new MOC opportunity:**
-
-```bash
-obsidian search query="reliability patterns" total
-```
-
-If count >= 3 and no MOC covers this topic:
-
-```
-💡 Create new MOC?
-   "Reliability Patterns MOC" doesn't exist but would fit 3+ existing notes
-   Create it? [Y/n]
-```
-
-### Step 7: Suggest Related Links
-
-Search vault for related content using extracted topics:
-
-**For each topic, search vault:**
-
-```bash
-obsidian search query="[topic]" path="200 - Notes" limit=5
-obsidian search query="[topic]" path="300 - Reference" limit=5
-```
-
-**Check relevance** by reading files and counting topic frequency.
-
-**Filter suggestions:**
-
-- Skip if only one passing mention
-- Check link counts to avoid over-linking:
-
-  ```bash
-  obsidian links file="Note" total
-  ```
-
-  If > 15, only show high-confidence suggestions.
-
-**Present suggestions:**
-
-```
-🔗 Suggested Related Links:
-  - [[Bulkhead Pattern]]
-  - [[Graceful Degradation]]
-  - [[Exponential Backoff]]
-```
-
-### Step 8: Interactive Review
+### Step 7: Interactive Review
 
 Present complete suggestion:
 
 ```
-📋 Note Summary:
+Article Summary:
 
-Title: "Circuit breakers prevent cascading failures"
-Type: Note
-Destination: 200 - Notes/
-MOCs: [[Reliability Patterns MOC]], [[SRE Concepts MOC]]
-Related: [[Bulkhead Pattern]], [[Graceful Degradation]]
+Title: "Circuit Breaker Pattern"
+Type: concept
+Destination: wiki/concepts/circuit-breaker-pattern.md
+Domains: [sre, resilience]
+Maturity: draft
+Confidence: medium
+Related: [[bulkhead-pattern]], [[graceful-degradation]]
 
 Would you like to:
 A) Create with these settings (recommended)
 B) Edit title
-C) Edit destination
-D) Edit MOCs
+C) Edit destination/type
+D) Edit domains
 E) Edit related links
 F) Cancel
 ```
 
-Use **AskUserQuestion** to get their choice. Allow iterative refinement for options B-E.
+### Step 8: Create File
 
-### Step 9: Create File
+Once approved, create file with proper wiki frontmatter and structure.
 
-Once approved, create file with proper structure using **lib/obsidian-operations.md** instructions:
-
-#### For Notes (200 - Notes/)
-
-**Create file:**
-
-```bash
-obsidian create path="200 - Notes/[title].md" content="# [title]\n\n[User's content or placeholder]" silent
-```
-
-**Set properties:**
-
-```bash
-obsidian property:set name="tags" value="[tag1],[tag2],[tag3]" type=list file="[title]"
-obsidian property:set name="created" value="2026-04-13" type=date file="[title]"
-obsidian property:set name="mocs" value="[[Reliability Patterns MOC]],[[SRE Concepts MOC]]" type=list file="[title]"
-```
-
-**Add Related section:**
-
-```bash
-obsidian append file="[title]" content="\n## Related\n\n- [[Bulkhead Pattern]]\n- [[Graceful Degradation]]\n- [[Exponential Backoff]]"
-```
-
-**Example final structure:**
+#### For Concepts (wiki/concepts/)
 
 ```markdown
 ---
-tags: [circuit-breaker, reliability, fault-tolerance]
-created: 2026-04-13
-mocs:
-  - [[Reliability Patterns MOC]]
-  - [[SRE Concepts MOC]]
----
-
-# Circuit breakers prevent cascading failures
-
-[User's content or placeholder]
-
-## Related
-
-- [[Bulkhead Pattern]]
-- [[Graceful Degradation]]
-- [[Exponential Backoff]]
-```
-
-#### For References (300 - Reference/)
-
-**Create file:**
-
-```bash
-obsidian create path="300 - Reference/[subfolder]/[title].md" content="# [title]\n\n[User's content or placeholder]" silent
-```
-
-**Set properties:**
-
-```bash
-obsidian property:set name="tags" value="[tag1],[tag2]" type=list file="[title]"
-obsidian property:set name="created" value="2026-04-13" type=date file="[title]"
-obsidian property:set name="type" value="external" file="[title]"
-obsidian property:set name="source" value="[URL or book if known]" file="[title]"
-obsidian property:set name="mocs" value="[[Reliability Patterns MOC]]" type=list file="[title]"
-```
-
-**Add Related section:**
-
-```bash
-obsidian append file="[title]" content="\n## Related\n\n- [[Bulkhead Pattern]]\n- [[Retry Patterns]]"
-```
-
-**Example final structure:**
-
-```markdown
----
-tags: [circuit-breaker, pattern]
-created: 2026-04-13
-type: external
-source: [URL or book if known]
-mocs:
-  - [[Reliability Patterns MOC]]
+title: Circuit Breaker Pattern
+domain: [sre, resilience]
+maturity: draft
+confidence: medium
+sources:
+  - "[[raw/clippings/circuit-breaker-article.md]]"
+related:
+  - "[[bulkhead-pattern]]"
+  - "[[graceful-degradation]]"
+last_compiled: 2026-04-17
 ---
 
 # Circuit Breaker Pattern
 
-[User's content or placeholder]
+[Content or placeholder]
+
+## Key Points
+
+- [Main takeaway 1]
+- [Main takeaway 2]
 
 ## Related
 
-- [[Bulkhead Pattern]]
-- [[Retry Patterns]]
+- [[bulkhead-pattern]]
+- [[graceful-degradation]]
+- [[exponential-backoff]]
 ```
 
-### Step 10: Report Success
+#### For Guides (wiki/guides/)
+
+```markdown
+---
+title: Terraform Remote State Setup
+domain: [terraform, infrastructure]
+maturity: draft
+confidence: medium
+sources: []
+related:
+  - "[[terraform-state-locking]]"
+last_compiled: 2026-04-17
+---
+
+# Terraform Remote State Setup
+
+## Overview
+
+[Brief introduction]
+
+## Prerequisites
+
+- [Requirement 1]
+
+## Steps
+
+1. [Step 1]
+2. [Step 2]
+
+## Troubleshooting
+
+[Common issues]
+
+## Related
+
+- [[terraform-state-locking]]
+```
+
+#### For Company (wiki/company/)
+
+```markdown
+---
+title: Deployment Pipeline
+domain: [ci-cd, infrastructure]
+maturity: draft
+confidence: medium
+sources: []
+related:
+  - "[[ci-cd-best-practices]]"
+last_compiled: 2026-04-17
+---
+
+# Deployment Pipeline
+
+## Overview
+
+[How our org handles this]
+
+## Architecture
+
+[Internal specifics]
+
+## Runbook
+
+[Operational steps]
+
+## Related
+
+- [[ci-cd-best-practices]]
+```
+
+#### For Learning (wiki/learning/)
+
+```markdown
+---
+title: Lessons from Q1 Incident Review
+domain: [sre, incidents]
+maturity: draft
+confidence: high
+sources: []
+related:
+  - "[[incident-response-process]]"
+last_compiled: 2026-04-17
+---
+
+# Lessons from Q1 Incident Review
+
+## Context
+
+[What happened and when]
+
+## Key Lessons
+
+- [Lesson 1]
+- [Lesson 2]
+
+## Action Items
+
+- [What changed as a result]
+
+## Related
+
+- [[incident-response-process]]
+```
+
+Use Write tool to create file.
+
+### Step 9: Update Domain Index
+
+After creating the article, update the relevant domain index in `wiki/_indexes/`.
+
+For each domain in the article's `domain` field, update or create the index file:
+
+```bash
+# Check if domain index exists
+ls wiki/_indexes/sre.md 2>/dev/null
+```
+
+If the index exists, use Edit to add the new article under the appropriate section. If not, create it:
+
+```markdown
+---
+title: SRE Index
+type: domain-index
+last_updated: 2026-04-17
+---
+
+# SRE
+
+## Concepts
+
+- [[circuit-breaker-pattern]] - Circuit Breaker Pattern
+
+## Guides
+
+## Company
+
+## Learning
+```
+
+Add the new article under the matching type heading (Concepts, Guides, Company, or Learning).
+
+### Step 10: Append to Compile Log
+
+Append an entry to `wiki/_log.md`:
+
+```markdown
+- 2026-04-17 - Created [[circuit-breaker-pattern]] (concept) in wiki/concepts/
+```
+
+If `wiki/_log.md` does not exist, create it:
+
+```markdown
+---
+title: Wiki Compile Log
+type: log
+---
+
+# Wiki Compile Log
+
+- 2026-04-17 - Created [[circuit-breaker-pattern]] (concept) in wiki/concepts/
+```
+
+### Step 11: Report Success
 
 ```
-✅ Created: 200 - Notes/Circuit breakers prevent cascading failures.md
-✅ Added to [[Reliability Patterns MOC]]
-✅ Added 3 related links
-✅ Created frontmatter with tags and metadata
+Created: wiki/concepts/circuit-breaker-pattern.md
+Updated: wiki/_indexes/sre.md
+Updated: wiki/_indexes/resilience.md
+Logged: wiki/_log.md
 
 Next steps:
 - Fill in content if placeholder was used
-- Review and refine links
-- Update MOCs with new note
+- Review and refine related links
+- Update maturity/confidence as the article evolves
 ```
 
-Verify file creation:
+## Maturity and Confidence Levels
 
-```bash
-obsidian file file="[title]"
-```
+### Maturity
 
-## Content Analysis Details
+| Level | Meaning |
+|-------|---------|
+| `stub` | Placeholder with minimal content |
+| `draft` | Initial write-up, needs review |
+| `mature` | Well-developed, reviewed, trustworthy |
+| `canonical` | Authoritative reference, actively maintained |
 
-### Determining Note vs Reference
+New articles default to `draft`. Use `stub` if creating with placeholder content only.
 
-**Note indicators:**
+### Confidence
 
-- First-person language
-- Personal insights
-- Assertion-style claim
-- Short and focused
-- Your voice throughout
-
-**Reference indicators:**
-
-- External quotes
-- Code examples
-- Commands/configuration
-- Multiple topics
-- Source attribution
-
-**When ambiguous:**
-
-```
-This content could be either:
-- Note: Contains personal insights
-- Reference: Contains specific examples
-
-Help me decide:
-1. Is this your synthesis, or documentation?
-2. Will this need regular updates from external sources?
-3. Do you reference this for lookup, or is it an insight?
-```
-
-Use **AskUserQuestion** to get clarification.
-
-### Atomicity Check
-
-Ensure note covers single concept:
-
-**Count sections:**
-
-```bash
-obsidian outline file="Note" total
-```
-
-If more than 4 headings:
-
-```
-⚠️  Multiple topics detected ([count] sections)
-Consider splitting into separate notes:
-- Note 1: [First topic]
-- Note 2: [Second topic]
-```
-
-Use **AskUserQuestion** to confirm split or proceed as-is.
-
-### Title Generation
-
-For Notes, convert content to assertion:
-
-```
-Content: "I've learned that circuit breakers are essential for preventing cascading failures in distributed systems"
-
-→ Title: "Circuit breakers prevent cascading failures"
-```
-
-Pattern: Extract main claim, simplify to assertion form.
+| Level | Meaning |
+|-------|---------|
+| `low` | Uncertain, needs verification |
+| `medium` | Reasonable understanding, may have gaps |
+| `high` | Well-understood, verified against sources |
 
 ## Special Cases
 
@@ -559,62 +458,15 @@ Pattern: Extract main claim, simplify to assertion form.
 If user chooses to start fresh:
 
 1. **Ask for topic**
-2. **Research if needed** (suggest `/research` for unfamiliar topics)
+2. **Determine article type** based on the question the topic answers
 3. **Provide template** based on type
 4. **User fills in content**
 5. **Review and create**
 
-**Note template:**
-
-```markdown
-# [Assertion-style title]
-
-[Opening: State the insight clearly]
-
-[Body: Explain reasoning, provide context]
-
-[Examples or evidence if applicable]
-
-[Conclusion: Reinforce the insight]
-
-## Related
-
-- [[Related Note 1]]
-- [[Related Note 2]]
-```
-
-**Reference template:**
-
-```markdown
-# [Descriptive Title]
-
-## Overview
-
-[Brief introduction]
-
-## Key Concepts
-
-[Main content with sections]
-
-## Examples
-
-[Code or configuration examples]
-
-## References
-
-[External sources]
-
-## Related
-
-- [[Related Reference 1]]
-```
-
 ### Existing Content with Poor Structure
 
-If content is unstructured:
-
 ```
-⚠️  Content appears unstructured
+Content appears unstructured.
 
 Options:
 A) Auto-structure (extract title, organize sections)
@@ -622,44 +474,39 @@ B) Use as-is with frontmatter only
 C) Manually structure (I'll guide you)
 ```
 
-Use **AskUserQuestion** to get their choice.
-
 ### Empty or Minimal Content
 
-If content is very brief:
-
-```bash
-obsidian wordcount file="Note" words
 ```
-
-If under 50 words:
-
-```
-ℹ️  Content is brief (47 words)
+Content is brief (47 words).
 
 This could work as:
-- Note: If it's a focused insight (good!)
-- Placeholder: Fill in more detail later
+- stub: Placeholder to expand later
+- draft: If it captures the core idea
 
-Create now or expand first?
+Create as stub or draft?
 ```
 
-Use **AskUserQuestion** to confirm.
+### Content That Spans Multiple Types
+
+If content is both a concept explanation and a how-to guide:
+
+```
+This content covers both "what" and "how."
+
+Options:
+A) Create as concept (focus on understanding)
+B) Create as guide (focus on doing)
+C) Split into two articles (recommended)
+   - wiki/concepts/circuit-breaker-pattern.md
+   - wiki/guides/implementing-circuit-breakers.md
+```
 
 ## Error Handling
 
 ### File Already Exists
 
-Check if file exists before creating:
-
-```bash
-obsidian file file="[title]"
 ```
-
-If file info is returned (file exists):
-
-```
-⚠️  File already exists: "200 - Notes/Circuit breakers prevent cascading failures.md"
+File already exists: wiki/concepts/circuit-breaker-pattern.md
 
 Options:
 A) Choose different name
@@ -668,152 +515,48 @@ C) Overwrite (dangerous!)
 D) Open existing for editing
 ```
 
-Use **AskUserQuestion** to get their choice.
-
-### Invalid Destination
-
-If creating at a subfolder that might not exist:
+### Directory Doesn't Exist
 
 ```bash
-obsidian folders folder="300 - Reference"
+mkdir -p wiki/concepts
 ```
 
-Verify the target subfolder exists in the list. If not:
+Create the directory silently and continue.
 
-```
-❌ Destination doesn't exist: "300 - Reference/New-Category/"
+### Domain Index Doesn't Exist
 
-Options:
-A) Create directory
-B) Choose existing directory
-C) Cancel
-```
-
-For option A, create a file in the new folder (Obsidian CLI creates intermediate folders automatically):
-
-```bash
-obsidian create path="300 - Reference/New-Category/.gitkeep" content="" silent
-```
-
-### MOC Doesn't Exist
-
-Verify MOC exists:
-
-```bash
-obsidian file file="[MOC name]"
-```
-
-If not found:
-
-```
-⚠️  MOC doesn't exist: "Reliability Patterns MOC"
-
-Options:
-A) Create MOC now
-B) Skip this MOC
-C) Choose different MOC
-```
-
-Use **AskUserQuestion** to get their choice.
+Create a new domain index file in `wiki/_indexes/` and add the article.
 
 ### No Content Provided
 
 ```
-ℹ️  No content provided
+No content provided.
 
-I'll create a placeholder file with proper structure.
+I'll create a stub file with proper structure.
 You can fill in the content later in Obsidian.
 
 Proceed?
 ```
 
-Use **AskUserQuestion** to confirm.
-
 ## Best Practices
 
-1. **Assess atomicity** - One concept per Note
-2. **Use assertion titles** for Notes
-3. **Add minimal but relevant links** - Don't over-link
-4. **Create proper frontmatter** from start
-5. **Suggest MOC creation** when appropriate
-6. **Provide templates** for empty content
-7. **Allow iteration** - Easy to edit before creating
-8. **Validate paths** before writing
-9. **Report clearly** what was created
+1. **One concept per article** - Keep articles atomic and focused
+2. **Use descriptive titles** - Clear and searchable
+3. **Kebab-case filenames always** - Consistent, URL-friendly
+4. **Assign domains, not folders** - Domains are the organizational primitive
+5. **Link to sources in raw/** - Maintain provenance
+6. **Set realistic maturity** - Don't over-rate initial drafts
+7. **Update indexes immediately** - Keep discovery paths current
+8. **Log every creation** - wiki/_log.md is the audit trail
+9. **Allow iteration** - Easy to edit before creating
 10. **Guide next steps** after creation
-
-## Integration with Utilities
-
-This skill uses shared utilities:
-
-- **lib/obsidian-operations.md** - All vault operations (read, create, search, properties)
-- **lib/analysis.md** - Classify type, extract topics, suggest title, match MOCs
-
-## Usage Examples
-
-### Example 1: Create from Inbox
-
-```
-User: /create-note
-
-Do you have content already?
-A) I have content in inbox
-
-Select file:
-1) random thoughts on circuit breakers.md
-
-[Analyzes content]
-
-This looks like a Note (personal insight).
-Suggested title: "Circuit breakers prevent cascading failures"
-Destination: 200 - Notes/
-
-Create? [Y/n]
-
-✅ Created: 200 - Notes/Circuit breakers prevent cascading failures.md
-```
-
-### Example 2: Start from Scratch
-
-```
-Do you have content already?
-C) Start from scratch
-
-What topic?
-> Error budgets and feature velocity
-
-I'll create a Note template. This seems like personal synthesis.
-
-Title: "Error budgets enable feature velocity"
-Type: Note
-
-[Creates template]
-
-✅ Created with placeholder content
-Open in Obsidian to complete
-```
-
-### Example 3: Reference Creation
-
-```
-[Analyzes content]
-
-This looks like Reference material (external documentation).
-Type: Reference
-Topics: terraform, state management
-
-Suggested destination: 300 - Reference/terraform/
-Suggested MOCs: [[Terraform MOC]]
-
-✅ Created: 300 - Reference/terraform/State Management.md
-```
 
 ## Related Skills
 
-- **/classify-inbox** - Process existing inbox files
-- **/research** - Research and create reference notes
-- **/check-moc-health** - Verify MOC after adding note
+- **/classify-inbox** - Process raw/ files into wiki articles
+- **/research** - Research and create reference articles
+- **/check-moc-health** - Verify indexes after adding articles
 
 ## Summary
 
-The create-note skill provides guided note creation with proper classification, structure, linking, and organization following LYT principles. Ensures new notes are properly integrated into the vault from creation.
+The create-note skill provides guided wiki article creation with proper classification into concepts/guides/company/learning, kebab-case naming, domain tagging, index updates, and compile logging. Ensures new articles are properly integrated into the wiki from creation.

@@ -1,20 +1,18 @@
 ---
 name: research
-description: This skill should be used when the user asks to "research a topic", "research [topic]", "create reference note about [topic]", "look up [topic]", or wants to gather information about a subject and create a structured reference note with sources.
-version: 1.0.0
+description: This skill should be used when the user asks to "research a topic", "research [topic]", "create wiki article about [topic]", "look up [topic]", or wants to gather information about a subject and create a structured wiki article with sources.
+version: 0.2.0
 argument-hint: <topic>
-allowed-tools: [Bash, Edit, WebFetch, mcp__plugin_context7_context7__query-docs, AskUserQuestion]
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
 
 # Research Skill
 
-Research topics using web search or Context7 and create well-structured reference notes with proper source attribution, MOC links, and vault integration.
-
-For advanced Obsidian markdown syntax (callouts, embeds, block references), follow the `obsidian:obsidian-markdown` skill.
+Research topics using web search or Context7 and create well-structured wiki articles with proper source attribution, domain indexing, and activity logging.
 
 ## Purpose
 
-Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into structured reference notes, suggests appropriate MOCs and links, and integrates seamlessly into the vault with proper attribution.
+Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into structured wiki articles, assigns domain tags, updates indexes, and integrates seamlessly into the vault with proper attribution.
 
 ## When to Use
 
@@ -22,49 +20,33 @@ Invoke this skill when:
 
 - User explicitly runs `/research <topic>`
 - User asks to research, look up, or investigate a topic
-- User wants to create a reference note about something new
-- User mentions adding external knowledge to vault
+- User wants to create a wiki article about something new
+- User mentions adding external knowledge to the wiki
+
+## Vault Structure
+
+This skill creates articles in a Karpathy-style LLM wiki:
+
+| Folder | Purpose |
+|--------|---------|
+| `wiki/concepts/` | Atomic concept articles (patterns, principles, definitions) |
+| `wiki/guides/` | How-to content, runbooks, operational procedures |
+| `wiki/_indexes/` | Domain index files |
+| `wiki/_index.md` | Master index |
+| `wiki/_log.md` | Activity log |
 
 ## Workflow Overview
 
-1. **Pre-flight check** - Verify Obsidian is running
-2. **Parse topic** - Extract topic from arguments
-3. **Check existing content** - See if topic already exists
-4. **Research strategy** - Choose web search or Context7
-5. **Gather information** - Fetch and synthesize content
-6. **Analyze and structure** - Create reference note outline
-7. **Suggest organization** - Destination, MOCs, links
-8. **Present interactively** - Review and edit
-9. **Create file** - Write with proper sources and links
-
-## Libraries
-
-This skill uses:
-
-- **lib/obsidian-operations.md** — All CLI-based vault operations
-- **lib/analysis.md** — Content classification, topic extraction, MOC matching
+1. **Parse topic** - Extract topic from arguments
+2. **Research strategy** - Choose web search or Context7
+3. **Gather information** - Fetch and synthesize content
+4. **Analyze and structure** - Create wiki article outline
+5. **Suggest organization** - Destination subfolder, domain tags, related links
+6. **Present interactively** - Review and edit
+7. **Create article** - Write with proper frontmatter and sources
+8. **Update indexes and log** - Maintain wiki infrastructure
 
 ## Process Flow
-
-### Step 0: Pre-flight Check
-
-Before any vault operations, verify Obsidian is running:
-
-```bash
-obsidian vault
-```
-
-If this fails, present to the user:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
-Use **AskUserQuestion** to get their choice. Do not proceed until the pre-flight check passes.
 
 ### Step 1: Parse Topic Argument
 
@@ -89,50 +71,28 @@ Examples:
 - "Terraform state management"
 ```
 
-### Step 2: Check for Existing Content
-
-Before researching, check if the topic already exists in the vault:
-
-```bash
-# Search for the topic
-obsidian search query="$TOPIC" limit=5
-```
-
-If matches found:
-
-```
-⚠️  Found existing notes about "$TOPIC":
-1. [file 1]
-2. [file 2]
-
-Options:
-A) Update existing note with new sources
-B) Create separate new version
-C) Review existing note first
-D) Cancel
-```
-
-Use **AskUserQuestion** to get their decision. If they choose A, read the existing note and plan to enhance it. If C, show them the content with `obsidian read file="..."` before continuing.
-
-### Step 3: Determine Research Strategy
+### Step 2: Determine Research Strategy
 
 Choose appropriate research method:
 
 ```
 Is topic a programming library/framework/API?
-  ├─ Yes → Use Context7 for authoritative docs
-  └─ No → Use WebFetch for web search
-      ├─ Search query: "<topic> SRE" or "<topic> definition"
-      ├─ Fetch top 2-3 authoritative results
-      └─ Synthesize into structured note
+  |-- Yes -> Use Context7 for authoritative docs
+  |-- No -> Use WebFetch for web search
+      |-- Search query: "<topic> SRE" or "<topic> definition"
+      |-- Fetch top 2-3 authoritative results
+      |-- Synthesize into structured article
 ```
 
 **Decision tree:**
 
-```
-Is the topic a specific programming library, framework, or API?
-  ├─ Yes (React, Kubernetes, Terraform, Python, etc.) → Use Context7
-  └─ No (general concept, SRE practice, theory) → Use web search
+```bash
+# Check if topic is tech/programming related
+if echo "$TOPIC" | grep -qi "react\|kubernetes\|terraform\|python\|javascript"; then
+  STRATEGY="context7"
+else
+  STRATEGY="websearch"
+fi
 ```
 
 **Always confirm with user:**
@@ -149,7 +109,7 @@ Or would you prefer:
 Proceed with web search? [Y/n]
 ```
 
-### Step 4: Gather Information
+### Step 3: Gather Information
 
 #### Strategy A: Web Search
 
@@ -158,9 +118,9 @@ Use **WebFetch** tool to search and retrieve content:
 ```bash
 # Step 1: Construct search query
 QUERY="${TOPIC} definition"
-ALT_QUERY="${TOPIC} SRE"  # For technical topics
+ALT_QUERY="${TOPIC} SRE"
 
-# Step 2: Search (use WebFetch with search URL)
+# Step 2: Search
 RESULTS=$(web_search "$QUERY")
 
 # Step 3: Identify authoritative sources
@@ -177,11 +137,6 @@ for url in $TOP_URLS; do
 done
 
 # Step 5: Synthesize key information
-# Extract:
-# - Definition
-# - Key concepts
-# - Examples
-# - Related topics
 ```
 
 **Example web search flow:**
@@ -189,21 +144,23 @@ done
 ```
 Researching "Little's Law"...
 
-🔍 Searching web sources...
-✅ Found: Wikipedia (https://en.wikipedia.org/wiki/Little%27s_law)
-✅ Found: ACM article (https://dl.acm.org/...)
-✅ Found: SRE blog (https://sre.google/...)
+Searching web sources...
+Found: Wikipedia (https://en.wikipedia.org/wiki/Little%27s_law)
+Found: ACM article (https://dl.acm.org/...)
+Found: SRE blog (https://sre.google/...)
 
-📚 Synthesizing information...
+Synthesizing information...
 ```
 
 #### Strategy B: Context7 (Libraries/Frameworks)
 
-Use **Context7** MCP tool:
+Use **Context7** MCP tools:
 
 ```bash
-# Query Context7 for library documentation
+# Resolve library ID
 LIBRARY_ID=$(resolve_library_id "$TOPIC")
+
+# Query documentation
 DOCS=$(query_docs "$LIBRARY_ID" "overview getting started")
 ```
 
@@ -212,31 +169,54 @@ DOCS=$(query_docs "$LIBRARY_ID" "overview getting started")
 ```
 Researching "React hooks"...
 
-📚 Using Context7 for authoritative documentation...
-✅ Retrieved: React official docs
-✅ Retrieved: Hooks API reference
+Using Context7 for authoritative documentation...
+Retrieved: React official docs
+Retrieved: Hooks API reference
 
-📝 Synthesizing documentation...
+Synthesizing documentation...
 ```
 
-### Step 5: Synthesize and Structure Content
+### Step 4: Synthesize and Structure Content
 
-Create structured reference note from gathered information:
+Create structured wiki article from gathered information:
 
-#### 5a. Extract Key Information
+#### 4a. Extract Key Information
 
 From sources, extract:
 
 - **Definition:** Clear, concise explanation
 - **Key Concepts:** Main ideas and terminology
-- **Formula/Syntax:** If applicable (e.g., Little's Law: L = λW)
+- **Formula/Syntax:** If applicable
 - **Examples:** Practical applications
 - **Use Cases:** When to use / when not to use
 - **Related Topics:** Connected concepts
 
-#### 5b. Create Note Outline
+#### 4b. Determine Wiki Subfolder
+
+| Subfolder | Content Type |
+|-----------|-------------|
+| `wiki/concepts/` | Patterns, principles, definitions, theories |
+| `wiki/guides/` | How-to content, tutorials, operational procedures |
+
+**Decision:** If the content primarily explains what something IS, use `concepts/`. If it explains how to DO something, use `guides/`.
+
+#### 4c. Create Article Outline
 
 ```markdown
+---
+title: [Topic Title]
+domain: [domain-tags]
+maturity: draft
+confidence: medium
+sources:
+  - "https://source-url-1"
+  - "https://source-url-2"
+related:
+  - "[[related-article-one]]"
+  - "[[related-article-two]]"
+last_compiled: YYYY-MM-DD
+---
+
 # [Topic Title]
 
 ## Overview
@@ -249,7 +229,7 @@ From sources, extract:
 
 ## Formula/Syntax
 
-[If applicable - formulas, code syntax, etc.]
+[If applicable]
 
 ## Examples
 
@@ -259,226 +239,133 @@ From sources, extract:
 
 [When and how to apply]
 
-## Related Topics
+## Related
 
-[Connected concepts]
-
-## References
-
-[Source links]
+- [[related-article-one]]
+- [[related-article-two]]
 ```
 
-#### 5c. Write Synthesized Content
+#### 4d. Generate Kebab-Case Filename
 
-Generate clear, concise content:
-
-```markdown
-# Little's Law
-
-## Overview
-
-Little's Law relates queue length, arrival rate, and wait time in queueing theory.
-Formulated by John Little in 1961, it's fundamental for capacity planning and
-performance analysis in distributed systems.
-
-## Formula
-
-```
-
-L = λW
-
-```
-
-Where:
-- L = average number of items in system
-- λ = average arrival rate
-- W = average wait time
-
-## Examples
-
-### Web Server Capacity
-
-If requests arrive at 100/sec (λ) and average response time is 0.5sec (W):
-- L = 100 × 0.5 = 50 concurrent requests
-
-This tells us the system needs capacity for 50 concurrent connections.
-
-## Use Cases
-
-- **Capacity planning:** Determine required system resources
-- **Performance analysis:** Understand queue behavior
-- **SLO setting:** Calculate target latencies from load
-
-## Related Topics
-
-- Queue theory
-- Performance modeling
-- Capacity planning
-- Latency budgets
-
-## References
-
-- https://en.wikipedia.org/wiki/Little%27s_law
-- https://dl.acm.org/doi/10.1145/...
-```
-
-### Step 6: Analyze Topics and Suggest Organization
-
-Use **lib/analysis.md** to extract topics from the synthesized content. Identify:
-
-1. **Technical terms:** Capitalized acronyms (SLO, SRE), hyphenated terms (error-budget)
-2. **Domain terms:** Compound phrases (service level objective, capacity planning)
-3. **Heading terms:** Words from H2/H3 headings
-
-Example extracted topics: `["queueing theory", "performance", "capacity planning"]`
-
-#### 6a. Suggest Destination Folder
-
-Match topics to existing Reference subfolders:
+Convert the topic title to a kebab-case filename:
 
 ```bash
-# Get Reference structure
-obsidian folders folder="300 - Reference"
-
-# Match topics to folder names
-# "queueing theory" + "performance" → "300 - Reference/SRE-Concepts/"
-# "terraform" → "300 - Reference/terraform/"
+# "Little's Law" -> "littles-law.md"
+# "Circuit Breaker Pattern" -> "circuit-breaker-pattern.md"
+# "Kubernetes Service Mesh" -> "kubernetes-service-mesh.md"
 ```
 
-**Present suggestion:**
+### Step 5: Suggest Organization
+
+#### 5a. Suggest Destination
 
 ```
-📁 Suggested Location:
-   300 - Reference/SRE-Concepts/Little's Law.md
+Suggested Destination:
+   wiki/concepts/littles-law.md
 
-Rationale: Best match for topics (performance, capacity planning)
+Rationale: Describes a principle/theory — fits concepts/
 
-Available alternatives:
-- 300 - Reference/Math/
-- 300 - Reference/Laws-and-Principles/
+Alternative:
+   wiki/guides/ (if this were a how-to)
 ```
 
-If no good match exists:
+#### 5b. Suggest Domain Tags
+
+Analyze content and suggest domain tags:
 
 ```
-Topics don't match existing folders well.
+Suggested Domains: [sre, performance, capacity-planning]
 
-Options:
-A) Create new folder: "300 - Reference/[new-topic]/"
-B) Place in closest match: "300 - Reference/SRE-Concepts/"
-C) Specify custom location
+These will be used for indexing in wiki/_indexes/
 ```
 
-#### 6b. Suggest MOCs
+#### 5c. Find Related Articles
 
-Use **lib/analysis.md** MOC matching algorithm:
+Search wiki for related content:
 
 ```bash
-# 1. Get all MOCs
-obsidian files folder="100 - MOCs" ext=md
-
-# 2. For each MOC, calculate score:
-#    - Read MOC content: obsidian read file="MOC Name"
-#    - Count keyword matches (weight 2x)
-#    - Get MOC links: obsidian links file="MOC Name"
-#    - Count link overlaps (weight 1x)
-#    - Check title match (weight 3x)
-
-# 3. Return top 2-3 with confidence
+# Search for related terms in existing wiki articles
+grep -rl "performance\|capacity\|queueing" wiki/ --include="*.md"
 ```
 
 **Present suggestions:**
 
 ```
-🗺️  Suggested MOCs:
-  - [[Laws & Principles MOC]] (high confidence) — title match, 3 keyword matches
-  - [[SRE Concepts MOC]] (medium confidence) — 1 keyword match
+Suggested Related Articles:
+  - [[capacity-planning-guide]]
+  - [[latency-throughput-goodput]]
 ```
 
-#### 6c. Find Related Notes
-
-Search vault for related content:
-
-```bash
-# Search for each topic term
-for term in $TOPICS; do
-  obsidian search query="$term" path="200 - Notes" limit=3
-  obsidian search query="$term" path="300 - Reference" limit=3
-done
-```
-
-**Present suggestions:**
-
-```
-🔗 Suggested Related Links:
-  - [[Latency, throughput, goodput]] (related concept)
-  - [[Capacity Planning]] (related practice)
-```
-
-### Step 7: Present Complete Summary Interactively
+### Step 6: Present Complete Summary Interactively
 
 Show preview:
 
 ```
-📝 Research Summary:
+Research Summary:
 
 Topic: Little's Law
 Strategy: Web search
 Sources: 3 (Wikipedia, ACM, Google SRE)
 
-📄 Content Preview:
+Content Preview:
 Little's Law relates queue length, arrival rate, and wait time...
-[Formula: L = λW]
+[Formula: L = lambda * W]
 [Use cases: capacity planning, performance analysis...]
 
-📁 Suggested Location:
-   300 - Reference/SRE-Concepts/Little's Law.md
+Destination: wiki/concepts/littles-law.md
 
-🗺️  Suggested MOCs:
-  - [[Laws & Principles MOC]] (high confidence)
-  - [[SRE Concepts MOC]] (medium confidence)
+Domain Tags: [sre, performance, capacity-planning]
 
-🔗 Additional Links:
-  - [[Latency, throughput, goodput]]
-  - [[Capacity Planning]]
+Related Articles:
+  - [[capacity-planning-guide]]
+  - [[latency-throughput-goodput]]
 
 Would you like to:
 A) Create with these settings (recommended)
-B) Edit location
-C) Edit MOCs
+B) Edit destination subfolder
+C) Edit domain tags
 D) Edit related links
 E) Edit content
 F) Show full content preview
 G) Cancel
 ```
 
-### Step 8: Handle User Editing
+### Step 7: Handle User Editing
 
-#### Option B: Edit Location
+#### Option B: Edit Destination
 
 ```
-Current: 300 - Reference/SRE-Concepts/
+Current: wiki/concepts/
 
 Choose destination:
-1. 300 - Reference/SRE-Concepts/
-2. 300 - Reference/Laws-and-Principles/
-3. 300 - Reference/Math/
-4. [Custom path]
+1. wiki/concepts/
+2. wiki/guides/
 
-Select (1-4):
+Select (1-2):
 ```
 
-#### Option C: Edit MOCs
+#### Option C: Edit Domain Tags
 
 ```
-Suggested MOCs:
-1. [[Laws & Principles MOC]]
-2. [[SRE Concepts MOC]]
+Current domains: [sre, performance, capacity-planning]
 
 Actions:
 - Keep all (default)
-- Remove: [enter numbers: 2]
-- Add: [enter MOC names]
+- Remove: [enter tags]
+- Add: [enter tags]
+```
+
+#### Option D: Edit Related Links
+
+```
+Suggested related:
+1. [[capacity-planning-guide]]
+2. [[latency-throughput-goodput]]
+
+Actions:
+- Keep all
+- Remove specific (enter numbers)
+- Add additional (enter kebab-case article names)
 ```
 
 #### Option E: Edit Content
@@ -493,54 +380,133 @@ Edit directly? [Y/n]
 Or provide feedback and I'll revise.
 ```
 
-### Step 9: Create File with Proper Attribution
+### Step 8: Create Article with Proper Attribution
 
-Once approved, create the file:
+Once approved, write the wiki article:
 
-```bash
-# 1. Create file with content
-obsidian create path="300 - Reference/SRE-Concepts/Little's Law.md" content="# Little's Law\n\n[Synthesized content]\n\n## Related\n\n- [[Latency, throughput, goodput]]\n- [[Capacity Planning]]" silent
-
-# 2. Set all properties
-obsidian property:set name="tags" value="queueing-theory,performance,capacity-planning" type=list file="Little's Law"
-obsidian property:set name="created" value="2026-04-13" type=date file="Little's Law"
-obsidian property:set name="type" value="external" file="Little's Law"
-obsidian property:set name="sources" value="https://en.wikipedia.org/wiki/Little%27s_law,https://dl.acm.org/doi/10.1145/...,https://sre.google/workbook/..." type=list file="Little's Law"
-obsidian property:set name="mocs" value="[[Laws & Principles MOC]],[[SRE Concepts MOC]]" type=list file="Little's Law"
-```
-
-The resulting file will have:
-
-```yaml
+```markdown
 ---
-tags: [queueing-theory, performance, capacity-planning]
-created: 2026-04-13
-type: external
+title: Little's Law
+domain: [sre, performance, capacity-planning]
+maturity: draft
+confidence: medium
 sources:
-  - https://en.wikipedia.org/wiki/Little%27s_law
-  - https://dl.acm.org/doi/10.1145/...
-  - https://sre.google/workbook/...
-mocs:
-  - [[Laws & Principles MOC]]
-  - [[SRE Concepts MOC]]
+  - "https://en.wikipedia.org/wiki/Little%27s_law"
+  - "https://dl.acm.org/doi/10.1145/..."
+  - "https://sre.google/workbook/..."
+related:
+  - "[[capacity-planning-guide]]"
+  - "[[latency-throughput-goodput]]"
+last_compiled: 2026-04-17
 ---
 
 # Little's Law
 
-[Synthesized content]
+## Overview
+
+Little's Law relates queue length, arrival rate, and wait time in queueing theory.
+Formulated by John Little in 1961, it's fundamental for capacity planning and
+performance analysis in distributed systems.
+
+## Formula
+
+```
+
+L = lambda * W
+
+```
+
+Where:
+- L = average number of items in system
+- lambda = average arrival rate
+- W = average wait time
+
+## Examples
+
+### Web Server Capacity
+
+If requests arrive at 100/sec (lambda) and average response time is 0.5sec (W):
+- L = 100 * 0.5 = 50 concurrent requests
+
+This tells us the system needs capacity for 50 concurrent connections.
+
+## Use Cases
+
+- **Capacity planning:** Determine required system resources
+- **Performance analysis:** Understand queue behavior
+- **SLO setting:** Calculate target latencies from load
 
 ## Related
 
-- [[Latency, throughput, goodput]]
-- [[Capacity Planning]]
+- [[capacity-planning-guide]]
+- [[latency-throughput-goodput]]
+```
+
+Use **Write** tool to create the file.
+
+### Step 9: Update Wiki Infrastructure
+
+#### 9a. Update Domain Indexes
+
+For each domain tag, find or create the index file in `wiki/_indexes/`:
+
+```bash
+# e.g., for domain "sre"
+INDEX_FILE="wiki/_indexes/sre.md"
+```
+
+If the index exists, append the new article. If not, create it:
+
+```markdown
+---
+title: SRE Domain Index
+domain: sre
+last_updated: 2026-04-17
+---
+
+# SRE
+
+## Concepts
+
+- [[littles-law]] — Little's Law
+
+## Guides
+
+[entries here]
+```
+
+Add the article under the section matching its subfolder (Concepts or Guides).
+
+#### 9b. Update Master Index
+
+If the article introduces a new domain not yet in `wiki/_index.md`, add it:
+
+```markdown
+## Domains
+
+- [[wiki/_indexes/sre|SRE]]
+- [[wiki/_indexes/performance|Performance]]
+```
+
+#### 9c. Append to Activity Log
+
+Add entry to `wiki/_log.md`:
+
+```markdown
+## [2026-04-17] research | Little's Law
+
+- Sources: 3 (Wikipedia, ACM, Google SRE)
+- Destination: `wiki/concepts/littles-law.md`
+- Domain: sre, performance, capacity-planning
+- Maturity: draft
 ```
 
 ### Step 10: Report Success
 
 ```
-✅ Research Complete!
+Research Complete!
 
-Created: 300 - Reference/SRE-Concepts/Little's Law.md
+Created: wiki/concepts/littles-law.md
 
 Content:
 - 342 words
@@ -548,16 +514,15 @@ Content:
 - Formula included
 - 2 examples provided
 
-Vault Integration:
-- Added to [[Laws & Principles MOC]]
-- Added to [[SRE Concepts MOC]]
-- 2 related links added
-- Proper frontmatter with sources
+Wiki Integration:
+- Domain indexes updated: sre, performance, capacity-planning
+- Related links: 2
+- Activity logged to wiki/_log.md
 
 Next steps:
 - Review and refine content in Obsidian
-- Add personal notes/insights
-- Link from related notes
+- Add personal insights
+- Promote maturity when confident (draft -> developing -> mature)
 ```
 
 ## Research Quality Guidelines
@@ -587,7 +552,7 @@ Avoid:
 - Include practical examples
 - Cite sources in frontmatter
 - Extract key formulas/code
-- Connect to related topics
+- Connect to related articles via kebab-case wikilinks
 
 **DON'T:**
 
@@ -601,18 +566,19 @@ Avoid:
 
 Always include:
 
-- `sources:` in frontmatter (URLs)
-- Reference section with links
-- `type: external` for external content
+- `sources:` in frontmatter (URLs for external, `[[raw/...]]` wikilinks for local)
+- `last_compiled:` date
+- `maturity: draft` for new articles
+- `confidence:` level based on source quality
 
 ## Special Cases
 
 ### Topic Not Found
 
 ```
-🔍 Researching "Obscure Internal Tool"...
+Researching "Obscure Internal Tool"...
 
-⚠️  No authoritative sources found
+No authoritative sources found
 
 Options:
 A) Create blank template (you fill in content)
@@ -627,9 +593,9 @@ Suggested alternative searches:
 ### Multiple Conflicting Sources
 
 ```
-🔍 Researching "CAP Theorem"...
+Researching "CAP Theorem"...
 
-⚠️  Found conflicting explanations across sources
+Found conflicting explanations across sources
 
 Multiple interpretations exist. I'll:
 - Include most authoritative definition (ACM)
@@ -639,53 +605,41 @@ Multiple interpretations exist. I'll:
 Proceed? [Y/n]
 ```
 
-### Topic Already Exists
+### Topic Already Exists in Wiki
 
 ```
-⚠️  Note already exists: "Little's Law.md"
+Article already exists: wiki/concepts/littles-law.md
 
 Options:
-A) Update existing note with new sources
+A) Update existing article with new sources
 B) Create separate version
 C) Cancel
-D) Review existing note
+D) Review existing article
 ```
+
+If updating, add new sources, refresh content, and update `last_compiled`.
 
 ### Library-Specific Research (Context7)
 
 ```
 Researching "React useEffect hook"...
 
-📚 Using Context7 for official docs...
+Using Context7 for official docs...
+Retrieved React documentation
 
-✅ Retrieved React documentation
+Note: Library-specific content.
+Suggested destination: wiki/guides/react-use-effect.md
+Domain: [frontend, react]
 
-Note: This is library-specific content.
-Consider creating in:
-- 300 - Reference/Frontend/React/
-- 300 - Reference/Tools/JavaScript/
-
-Choose destination?
+Create? [Y]
 ```
 
 ## Error Handling
 
-### Obsidian Not Running
-
-If `obsidian vault` fails:
-
-```
-Obsidian doesn't appear to be running. This plugin requires an open Obsidian vault.
-
-Options:
-A) Open Obsidian and retry
-B) Cancel
-```
-
 ### Network/Fetch Failure
 
 ```
-❌ Failed to fetch: https://example.com/article
+Failed to fetch: https://example.com/article
 
 Options:
 A) Continue with available sources (2/3)
@@ -696,7 +650,7 @@ C) Cancel research
 ### Context7 Not Available
 
 ```
-⚠️  Context7 unavailable for this library
+Context7 unavailable for this library
 
 Falling back to web search...
 
@@ -706,7 +660,7 @@ Or cancel and research manually?
 ### Invalid Topic
 
 ```
-❌ Topic too vague: "stuff"
+Topic too vague: "stuff"
 
 Please provide specific topic:
 - Good: "Circuit Breaker pattern"
@@ -714,23 +668,14 @@ Please provide specific topic:
 - Bad: "stuff", "things", "that"
 ```
 
-### File Creation Failure
-
-If `obsidian create` fails:
+### Missing Wiki Infrastructure
 
 ```
-❌ Failed to create file: [error message]
-
-This could mean:
-- File already exists (use overwrite option)
-- Invalid path or filename
-- Obsidian vault is not accessible
-
-Options:
-A) Retry with different name/path
-B) Show me the content so I can create manually
-C) Cancel
+wiki/_indexes/ not found — creating it now.
+wiki/_log.md not found — creating it now.
 ```
+
+Automatically create missing infrastructure and continue.
 
 ## Best Practices
 
@@ -739,11 +684,11 @@ C) Cancel
 3. **Synthesize, don't copy** - Original writing
 4. **Cite thoroughly** - All sources in frontmatter
 5. **Add examples** - Make content practical
-6. **Connect to vault** - Link to related notes
+6. **Connect via related links** - Use kebab-case wikilinks
 7. **Review before creating** - Check content quality
-8. **Update existing notes** - Don't duplicate
-9. **Use Context7 for tech** - Better than web for docs
-10. **Follow up** - Add personal insights later
+8. **Update existing articles** - Don't duplicate
+9. **Use Context7 for tech** - Better than web for library docs
+10. **Start as draft** - Promote maturity over time
 
 ## Usage Examples
 
@@ -752,21 +697,20 @@ C) Cancel
 ```
 User: /research Little's Law
 
-Pre-flight check...
-✅ Obsidian vault active
-
 Researching "Little's Law"...
 
-🔍 Web search strategy
-✅ Found 3 authoritative sources
-📝 Synthesized 342 words
+Web search strategy
+Found 3 authoritative sources
+Synthesized 342 words
 
-📁 Location: 300 - Reference/SRE-Concepts/
-🗺️  MOCs: [[Laws & Principles MOC]]
+Destination: wiki/concepts/littles-law.md
+Domains: [sre, performance, capacity-planning]
 
 Create? [Y]
 
-✅ Created with sources cited
+Created wiki/concepts/littles-law.md
+Updated indexes: sre, performance, capacity-planning
+Logged to wiki/_log.md
 ```
 
 ### Example 2: Library Documentation
@@ -774,20 +718,19 @@ Create? [Y]
 ```
 User: /research React hooks
 
-Pre-flight check...
-✅ Obsidian vault active
-
 Researching "React hooks"...
 
-📚 Using Context7 (library detected)
-✅ Retrieved official React docs
+Using Context7 (library detected)
+Retrieved official React docs
 
-📁 Location: 300 - Reference/Frontend/React/
-🗺️  MOCs: [[React MOC]], [[Frontend MOC]]
+Destination: wiki/guides/react-hooks.md
+Domains: [frontend, react]
 
 Create? [Y]
 
-✅ Created with documentation
+Created wiki/guides/react-hooks.md
+Updated indexes: frontend, react
+Logged to wiki/_log.md
 ```
 
 ### Example 3: Topic Already Exists
@@ -795,29 +738,26 @@ Create? [Y]
 ```
 User: /research Circuit Breaker
 
-Pre-flight check...
-✅ Obsidian vault active
-
-⚠️  Found existing note: "Circuit Breaker.md"
+Existing article found: wiki/concepts/circuit-breaker-pattern.md
 
 Options:
-D) Review existing note
+D) Review existing article
 
-[Shows existing content via obsidian read]
+[Shows existing article]
 
-Note has basic info. Add new sources? [Y]
+Article has basic info. Add new sources? [Y]
 
-🔍 Gathering new sources...
-✅ Found 2 additional authoritative sources
-
-Updated frontmatter with new sources.
+Updated wiki/concepts/circuit-breaker-pattern.md
+  - Added 2 new sources
+  - Updated last_compiled
+Logged to wiki/_log.md
 ```
 
 ## Related Skills
 
 - **/create-note** - Create from scratch without research
-- **/classify-inbox** - Process researched content from inbox
+- **/classify-inbox** - Ingest raw sources into wiki articles
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources, synthesizing structured reference notes with proper attribution, and integrating seamlessly into the vault with appropriate MOC links and related connections using Obsidian CLI commands.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured wiki articles with proper frontmatter (title, domain, maturity, confidence, sources, related, last_compiled), placing them in the appropriate wiki subfolder (concepts/ or guides/), updating domain indexes in `wiki/_indexes/`, and logging activity to `wiki/_log.md`.
