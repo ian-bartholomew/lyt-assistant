@@ -355,8 +355,8 @@ C) Cancel
 
 - **/create-project** - Create new project hubs
 - **/create-note** - Create wiki articles during extraction
-- **/classify-inbox** - Process raw items that may relate to projects
-- **/check-moc-health** - Verify wiki health after archival
+- **/ingest** - Process raw items that may relate to projects
+- **/lint** - Verify wiki health after archival
 
 ## Summary
 

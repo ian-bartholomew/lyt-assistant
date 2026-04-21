@@ -283,7 +283,7 @@ Link Discovery Complete
   - company: 1 connection
 
   Next steps:
-  - Run /check-moc-health to verify wiki health
+  - Run /lint to verify wiki health
   - Review newly connected articles in Obsidian graph view
 ```
 
@@ -395,7 +395,7 @@ Skipping this file. Continue? [Y/n]
 Cannot parse frontmatter in wiki/concepts/malformed.md
 
 Skipping this file from link discovery.
-Flag for /check-moc-health to investigate? [Y/n]
+Flag for /lint to investigate? [Y/n]
 ```
 
 ### Empty Wiki
@@ -422,8 +422,8 @@ or by archiving a project with /archive-project (which extracts knowledge).
 
 ## Related Skills
 
-- **/classify-inbox** - Add links when processing new raw items
-- **/check-moc-health** - Find orphans and validate wiki structure
+- **/ingest** - Add links when processing new raw items
+- **/lint** - Find orphans and validate wiki structure
 - **/create-note** - Create articles for detected gaps
 - **/archive-project** - Extract project knowledge with proper linking
 

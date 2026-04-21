@@ -756,7 +756,7 @@ Logged to wiki/_log.md
 ## Related Skills
 
 - **/create-note** - Create from scratch without research
-- **/classify-inbox** - Ingest raw sources into wiki articles
+- **/ingest** - Ingest raw sources into wiki articles
 
 ## Summary
 

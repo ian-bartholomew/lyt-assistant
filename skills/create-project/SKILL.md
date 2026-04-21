@@ -395,7 +395,7 @@ If user references a raw/ file:
 ## Related Skills
 
 - **/archive-project** - Complete and archive a project
-- **/classify-inbox** - Process raw/ files (may become projects)
+- **/ingest** - Process raw/ files (may become projects)
 - **/create-note** - Create wiki articles from project work
 
 ## Summary
