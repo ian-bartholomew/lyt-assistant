@@ -1,36 +1,78 @@
 # LYT Assistant Plugin
 
-A comprehensive Claude Code plugin for managing an Obsidian vault using the Linking Your Thinking (LYT) note-taking system.
+A Claude Code plugin for managing an Obsidian vault using a [Karpathy-style LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) system.
 
 ## Overview
 
-This plugin provides intelligent classification, link discovery, MOC health checking, note creation assistance, and automated research capabilities for managing a knowledge base organized with the LYT system.
+The LLM wiki pattern: you curate sources, direct analysis, and ask good questions. The LLM summarizes, cross-references, files, and maintains everything. Obsidian is the IDE; the LLM is the programmer; the wiki is the codebase.
 
-## Features
+This plugin implements the three core operations — **Ingest**, **Query**, and **Lint** — plus supporting skills for note creation, link discovery, research, and project management.
 
-### User Commands
+## Skills
 
-- **`/classify-inbox`** - Interactive file classifier for processing inbox items
-- **`/create-note`** - Guided creation of properly structured Notes or Reference files
-- **`/discover-links`** - Find missing connections between existing notes
-- **`/check-moc-health`** - Analyze MOC quality and suggest improvements
-- **`/research <topic>`** - Research and create well-structured reference notes
+| Skill | Operation | Description |
+|-------|-----------|-------------|
+| `/ingest` | Ingest | Process raw sources into wiki articles with propagation to related pages |
+| `/query <question>` | Query | Ask questions against the wiki, get synthesized answers with citations — good answers become new pages |
+| `/lint` | Lint | Structural + content-level health checks (contradictions, investigation suggestions) |
+| `/create-note` | — | Guided creation of wiki articles with classification and indexing |
+| `/discover-links` | — | Find missing connections between wiki articles |
+| `/research <topic>` | — | Research topics via web/Context7 and create wiki articles |
+| `/create-project` | — | Set up project directories with tracking |
+| `/archive-project` | — | Complete projects with knowledge extraction into wiki |
 
-## LYT System Structure
+## Wiki Structure
 
-The plugin expects your vault to follow the LYT folder structure:
+Three layers:
 
-- **000 - Inbox/** - Capture zone for all new content (temporary)
-- **100 - MOCs/** - Maps of Content for navigation and topic organization
-- **200 - Notes/** - Atomic concept notes in your own words
-- **300 - Reference/** - Configs, runbooks, book notes, and external materials
-- **400 - Archive/** - Stale or superseded content
+| Layer | Owner | Purpose |
+|-------|-------|---------|
+| `raw/` | User | Immutable sources (clippings, docs, articles) |
+| `wiki/` | LLM | Compiled knowledge — the persistent, compounding artifact |
+| Schema (skills + CLAUDE.md) | Both | How the wiki structures, conventions, workflows |
+
+```
+raw/                      # Immutable sources
+wiki/
+├── concepts/             # Atomic concept articles (What is X?)
+├── guides/               # How-to and operational guides (How do I X?)
+├── company/              # Company-specific knowledge (How does our org do X?)
+├── learning/             # Learning paths and study notes (What did I learn from X?)
+├── _indexes/             # Domain index files
+├── _index.md             # Master wiki index
+└── _log.md               # Activity log (append-only, parseable)
+projects/                 # Active project workspaces
+archive/                  # Completed projects
+```
+
+### Frontmatter Schema
+
+All wiki articles use:
+
+```yaml
+title: Article Title
+domain: [sre, resilience]
+maturity: stub | draft | mature | canonical
+confidence: low | medium | high
+sources: ["[[raw/clippings/source.md]]"]
+related: ["[[kebab-case-article]]"]
+last_compiled: 2026-04-21
+```
+
+### Activity Log
+
+All operations log to `wiki/_log.md` with parseable prefixes:
+
+```
+## [2026-04-21] ingest | Circuit Breaker Pattern
+## [2026-04-21] query | How do circuit breakers relate to bulkheads?
+## [2026-04-21] lint | Wiki Health Check
+## [2026-04-21] create | New Article Title
+```
 
 ## Installation
 
 See [INSTALL.md](INSTALL.md) for detailed installation instructions.
-
-**Quick install from GitHub:**
 
 ```bash
 claude plugin marketplace add github:ian-bartholomew/lyt-assistant
@@ -39,81 +81,63 @@ claude plugin install lyt-assistant@ian-bartholomew-lyt-assistant
 
 ## Usage Examples
 
-### Process Inbox Files
+### Ingest Raw Sources
 
-```bash
-/classify-inbox
+```
+/ingest
 ```
 
-Analyzes each inbox file and suggests:
+Scans `raw/` for unprocessed sources, compiles them into wiki articles, and propagates updates to related existing pages — one source can touch many articles.
 
-- Destination folder (Notes vs Reference)
-- Relevant MOC links
-- Related notes to cross-link
+### Query the Wiki
 
-### Create a New Note
-
-```bash
-/create-note
+```
+/query how do circuit breakers relate to bulkheads?
 ```
 
-Guides you through creating a properly structured note with appropriate links and frontmatter.
+Searches the wiki, synthesizes an answer with `[[wikilink]]` citations, and offers to save the answer as a new wiki page.
 
-### Find Missing Connections
+### Lint the Wiki
 
-```bash
-/discover-links
+```
+/lint
 ```
 
-Scans your vault for notes that mention similar topics but aren't linked together, grouped by theme.
-
-### Check MOC Health
-
-```bash
-/check-moc-health
-```
-
-Analyzes a MOC for:
-
-- Broken links
-- Missing coverage (orphaned notes)
-- Stale references
+Runs 10 audit dimensions: 8 structural (indexes, links, frontmatter, orphans, staleness, gaps, domain consistency, structure) + 2 content-level (contradiction detection, investigation suggestions).
 
 ### Research a Topic
 
-```bash
+```
 /research Little's Law
 ```
 
-Researches the topic using web search, creates a structured reference note with sources, and suggests relevant MOCs and links.
+Researches using web search or Context7, creates a structured wiki article with source attribution.
 
 ## Architecture
 
-The plugin uses a shared utility architecture:
-
-- **Skills/** - User-invocable commands
-- **lib/** - Shared utilities for consistent behavior
-  - `vault-scanner.md` - Vault traversal and indexing
-  - `link-parser.md` - Link extraction and manipulation
-  - `frontmatter.md` - YAML frontmatter operations
-  - `content-analyzer.md` - Classify Note vs Reference types
-  - `moc-matcher.md` - Match content to relevant MOCs
+- **skills/** — User-invocable commands (8 skills)
+- **lib/** — Shared utilities
+  - `analysis.md` — Content classification, topic extraction, domain matching
+  - `obsidian-operations.md` — Obsidian CLI operations for vault I/O
 
 ## Design Philosophy
 
-- **Interactive workflow** - Suggest, edit, execute pattern
-- **Zero data loss** - Atomic operations with rollback support
-- **DRY architecture** - Shared utilities ensure consistency
-- **User control** - Review and edit all suggestions before execution
+- **Karpathy LLM Wiki** — Raw sources, compiled wiki, co-evolved schema
+- **Explorations compound** — Good answers become new wiki pages
+- **One source, many pages** — Ingest propagates to related articles
+- **Interactive workflow** — Suggest, review, execute
+- **Zero data loss** — Atomic operations, provenance tracking
+- **Parseable logs** — Consistent `## [date] action | title` format
 
 ## Requirements
 
-- Obsidian vault following LYT system structure
-- Claude Code with access to Read, Write, Edit, Grep, Glob, Bash, WebFetch tools
+- Obsidian vault with the wiki structure above
+- Obsidian running (for CLI operations)
+- Claude Code
 
 ## Version
 
-Current version: 0.1.0
+1.0.0
 
 ## Author
 
