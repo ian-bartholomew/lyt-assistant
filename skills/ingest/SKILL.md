@@ -1,19 +1,17 @@
 ---
 name: ingest
-description: This skill should be used when the user asks to "ingest", "process inbox", "process raw", "compile source", "organize raw files", or wants to process unprocessed sources in the "raw/" folder into wiki articles. Scans raw/ for sources not yet referenced by any wiki article, compiles them into wiki articles, propagates updates to related existing articles, updates domain indexes, and logs activity.
-version: 0.1.0
+description: This skill should be used when the user asks to "ingest", "process inbox", "process raw", "compile source", "process raw", "compile source", "organize raw files", or wants to process unprocessed sources in the "raw/" folder into wiki articles. Scans raw/ for sources not yet referenced by any wiki article, compiles them into wiki articles, updates domain indexes, and logs activity.
+version: 0.3.0
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
 ---
 
 # Ingest Skill
 
-Scan `raw/` for unprocessed sources, compile them into wiki articles, and propagate cross-references to related existing articles.
+Scan `raw/` for unprocessed sources and compile them into wiki articles with proper frontmatter, domain indexing, and activity logging.
 
 ## Purpose
 
-Reduce friction in processing raw sources by scanning for unprocessed files, analyzing content, determining the appropriate wiki subfolder, compiling structured wiki articles with full frontmatter, propagating updates to related existing articles, updating domain indexes, and logging all activity. Present suggestions interactively for user review before execution.
-
-One source might touch 10–15 wiki pages — the propagation step ensures the graph stays connected.
+Reduce friction in processing raw sources by scanning for unprocessed files, analyzing content, determining the appropriate wiki subfolder, compiling structured wiki articles with full frontmatter, updating domain indexes, and logging all activity. Present suggestions interactively for user review before execution.
 
 ## When to Use
 
@@ -22,7 +20,7 @@ Invoke this skill when:
 - User explicitly runs `/ingest`
 - User mentions ingesting, processing, or compiling raw sources
 - User asks to process raw files into the wiki
-- User mentions "process inbox", "process raw", or "compile source"
+- User mentions "ingest", "process raw", or "compile source"
 
 ## Vault Structure
 
@@ -31,6 +29,11 @@ This skill operates on a Karpathy-style LLM wiki vault:
 | Folder | Owner | Purpose |
 |--------|-------|---------|
 | `raw/` | User | Immutable sources (clippings, docs) |
+| `raw/daily/` | Hooks | Session logs captured by Claude Code hooks |
+| `raw/clippings/` | User | Web clips via Obsidian Web Clipper |
+| `raw/support_learnings/` | User | Support channel thread summaries |
+| `raw/docs/` | User | Documents, proposals, write-ups |
+| `raw/daily_notes/` | User | Brief work notes |
 | `wiki/` | LLM | Compiled knowledge |
 | `wiki/concepts/` | LLM | Atomic concept articles |
 | `wiki/guides/` | LLM | How-to and operational guides |
@@ -45,13 +48,15 @@ This skill operates on a Karpathy-style LLM wiki vault:
 
 ## Workflow Overview
 
-1. **Scan raw/** — Find all source files
-2. **Identify unprocessed** — Cross-reference against wiki articles' `sources:` fields
-3. **Process each source** — Analyze, suggest wiki subfolder, present interactively
-4. **Compile wiki article** — Write with proper frontmatter
-5. **Propagate to related articles** — Update existing articles that should reference the new content
-6. **Update indexes and log** — Maintain `wiki/_indexes/` and `wiki/_log.md`
-7. **Report completion** — Summary including propagation stats
+1. **Scan raw/** - Find all source files
+2. **Build article manifest** - Scan wiki frontmatter for dedup and context
+3. **Identify unprocessed** - Cross-reference against manifest's `compiled_from` fields
+4. **Detect batches** - Group related sources (e.g., multi-part article series)
+5. **Process each source** - Analyze, classify, dedup check, present interactively
+6. **Compile wiki article** - Write with proper frontmatter and reciprocal links
+7. **Validate article** - Check wikilinks, word count, frontmatter before continuing
+8. **Update indexes and log** - Maintain `wiki/_indexes/` and `wiki/_log.md`
+9. **Report completion** - Summary of compiled articles
 
 ## Process Flow
 
@@ -89,23 +94,42 @@ fi
 mkdir -p wiki/_indexes
 ```
 
-### Step 2: Identify Unprocessed Sources
+### Step 2: Build Article Manifest
 
-Scan `raw/` for all markdown files, then cross-reference against `sources:` fields in existing wiki articles.
+Before scanning for unprocessed sources, build a lightweight manifest of all existing wiki articles. This avoids loading all article content into context.
 
-```bash
-# Get all raw source files
-RAW_FILES=$(find raw/ -name "*.md" -type f)
+```
+For each .md file in wiki/concepts/, wiki/guides/, wiki/company/, wiki/learning/:
+  Parse YAML frontmatter only (read from first --- to second ---)
+  Extract: title, domain, maturity, compiled_from, related
+  Record the file path
+```
 
-# Get all sources already referenced by wiki articles
-REFERENCED=$(grep -rh "sources:" wiki/ --include="*.md" -A 20 | grep '\[\[raw/' | sed 's/.*\[\[//;s/\]\].*//')
+Build a compact one-line-per-article index:
 
-# Filter to only unprocessed files
-for file in $RAW_FILES; do
-  if ! echo "$REFERENCED" | grep -q "$file"; then
-    UNPROCESSED+=("$file")
-  fi
-done
+```
+concepts/karpenter.md | Karpenter | domain: [infrastructure, kubernetes] | compiled_from: [meetings/2026-04-14-karpenter/summary-default.md, ...] | related: [[eks-runbook]], [[karpenter-migration]]
+concepts/circuit-breaker-pattern.md | Circuit Breaker Pattern | domain: [sre, resilience] | compiled_from: [raw/daily/2026-04-21.md] | related: [[bulkhead-pattern]], [[retry-with-backoff]]
+...
+```
+
+Use this manifest throughout the workflow to:
+
+- Identify which sources are already compiled (check `compiled_from` fields)
+- Find related articles for the `related:` frontmatter field
+- Detect duplicate topics before creating new articles
+- Determine if a source should update an existing article vs create new
+
+**When you need full article content** (e.g., to update an existing article), use the Read tool to read that specific file on demand.
+
+### Step 3: Identify Unprocessed Sources
+
+Using the manifest's `compiled_from` fields, find raw sources not yet referenced:
+
+```
+For each .md file in raw/ (recursively, all subdirectories):
+  Check if any article's compiled_from list contains this file path
+  If not referenced by any article: mark as unprocessed
 ```
 
 If no unprocessed files:
@@ -114,23 +138,47 @@ If no unprocessed files:
 No unprocessed sources found in raw/. Everything is compiled.
 ```
 
-Present count:
+### Step 3.5: Detect Batches
+
+Before presenting the unprocessed list, check for natural groupings:
 
 ```
-Found 3 unprocessed sources in raw/:
-
-1. raw/clippings/circuit-breaker-fowler.md
-2. raw/docs/terraform-state-locking.md
-3. raw/clippings/littles-law-wikipedia.md
-
-Process all? [Y/n/select specific]
+For sources in raw/clippings/:
+  Read frontmatter tags from each file
+  Group files sharing 2+ non-generic tags (exclude "clippings" as a clustering signal)
+  Flag multi-part series (files with "Part 1", "Part 2", etc. in the title)
 ```
 
-### Step 3: Process Each Source
+Present count with batch suggestions:
+
+```
+Found 12 unprocessed sources in raw/:
+
+  Batch 1 (9 files, shared tags: terraform, iac):
+    1. Part 1 Overview of our recommended workflow  Terraform.md
+    2. Part 2 Evaluate your current provisioning practices.md
+    3. Part 3.1 Move from manual changes to semi-automation.md
+    ...
+
+  Individual sources (3 files):
+    10. raw/daily/2026-04-24.md
+    11. raw/support_learnings/2026-04-23.md
+    12. raw/docs/datadog-idp-implementation-plan.md
+
+Process options:
+A) All (batches compiled together, individuals separately)
+B) Select specific files/batches
+C) Batches only
+D) Individuals only
+```
+
+When processing a batch: concatenate all source contents and compile together into unified articles. This produces fewer, richer articles instead of many thin overlapping ones. Each source file is still tracked individually in the article's `compiled_from` frontmatter.
+
+### Step 4: Process Each Source (or Batch)
 
 For each unprocessed source:
 
-#### 3a. Read and Analyze Content
+#### 4a. Read and Analyze Content
 
 Read the source file and determine:
 
@@ -138,16 +186,27 @@ Read the source file and determine:
 - What domain tags apply
 - What title the wiki article should have (kebab-case filename)
 - What maturity and confidence levels to assign
-- What related wiki articles exist
+- What related wiki articles exist (use the manifest)
+
+**Source-type-specific compilation guidance:**
+
+| Source Path | Content Type | Compilation Focus |
+|-------------|-------------|-------------------|
+| `raw/daily/` | Session logs | Extract decisions, lessons, patterns. Skip ephemeral task details (what commands were run, what files were read). Focus on knowledge that transfers to future work. |
+| `raw/clippings/` | Web articles | Extract core concepts, frameworks, and best practices. Attribute ideas to the original author. Preserve the source URL from frontmatter in the article's sources section. |
+| `raw/support_learnings/` | Support threads | Group threads by pattern, not per-thread. Focus on the "Learning" sections. Create `company/` articles for org-specific patterns and `concepts/` or `guides/` for general technical knowledge. |
+| `raw/docs/` | Documents/proposals | Capture the problem statement, proposed solution, trade-offs, and decisions made. Don't just describe — extract the reasoning. |
+| `raw/daily_notes/` | Brief work notes | These are typically thin. Prefer updating existing articles over creating new ones. Only create a new article if the note introduces a genuinely new concept. |
+| `meetings/` | Meeting summaries | Extract actionable decisions and technical knowledge. Skip social/scheduling chatter. Group by topic, not by meeting. |
 
 **Classification rules:**
 
 | Subfolder | Content Type |
 |-----------|-------------|
-| `wiki/concepts/` | Atomic ideas, patterns, principles, definitions |
-| `wiki/guides/` | How-to content, runbooks, operational procedures |
-| `wiki/company/` | Company-specific architecture, processes, tools |
-| `wiki/learning/` | Study notes, course material, learning paths |
+| `wiki/concepts/` | Atomic ideas, patterns, principles, definitions — "What is X?" |
+| `wiki/guides/` | How-to content, runbooks, operational procedures — "How do I X?" |
+| `wiki/company/` | Company-specific architecture, processes, tools, team knowledge |
+| `wiki/learning/` | Study notes, course material, book highlights, learning paths |
 
 **Output format:**
 
@@ -155,6 +214,7 @@ Read the source file and determine:
 Processing: "raw/clippings/circuit-breaker-fowler.md" (1 of 3)
 
 Content Analysis:
+- Source type: clipping (web article)
 - Suggested subfolder: wiki/concepts/
 - Title: Circuit Breaker Pattern
 - Filename: circuit-breaker-pattern.md
@@ -164,50 +224,55 @@ Content Analysis:
 - Reasoning: Describes a pattern/principle — fits concepts/
 ```
 
-#### 3b. Check for Existing Wiki Article
+#### 4b. Pre-Compilation Dedup Check
 
-Before creating, check if a wiki article on this topic already exists:
+**This step is critical for quality.** Before creating any article, check if a wiki article on this topic already exists:
 
 ```bash
 # Search by similar filename
 find wiki/ -name "*circuit-breaker*" -type f
 
-# Search by similar content
+# Search by content keywords
 grep -rl "circuit breaker" wiki/ --include="*.md"
+
+# Check manifest for overlapping compiled_from sources
+# (already done in Step 3, but verify for the specific topic)
 ```
 
-If found:
+Also check the manifest for articles with overlapping `related:` links or matching `domain:` tags that might cover the same ground.
+
+If potential overlap found:
 
 ```
 Existing article found: wiki/concepts/circuit-breaker-pattern.md
+  - Compiled from: raw/daily/2026-04-21.md
+  - Maturity: developing
+  - Word count: 450
 
 Options:
-A) Update existing article with new source
-B) Create separate article
+A) Update existing article with new source (recommended — avoids duplication)
+B) Create separate article (use if topics are distinct despite similar names)
 C) Skip this source
 ```
 
-If updating, add the new raw file to the existing article's `sources:` field and update `last_compiled`.
+If updating, add the new raw file to the existing article's `compiled_from:` field, merge in new content, and update `last_compiled`.
 
-#### 3c. Suggest Related Articles
+#### 4c. Suggest Related Articles
 
-Search wiki for related content:
+Using the manifest, find related content:
 
-```bash
-# Extract key terms from source content
-# Search for wiki articles mentioning same terms
-grep -rl "resilience\|fault tolerance\|cascade" wiki/ --include="*.md"
-```
-
-**Output format:**
+- Articles sharing the same `domain:` tags
+- Articles whose `related:` field references similar topics
+- Keyword search across article titles in the manifest
 
 ```
 Suggested Related Articles:
-  - [[bulkhead-pattern]]
-  - [[retry-with-backoff]]
+  - [[bulkhead-pattern]] (shared domain: sre, resilience)
+  - [[retry-with-backoff]] (shared domain: sre)
+  - [[graceful-degradation]] (referenced in related: by bulkhead-pattern)
 ```
 
-### Step 4: Present Options Interactively
+### Step 5: Present Options Interactively
 
 Use **AskUserQuestion** tool to present structured options:
 
@@ -283,11 +348,11 @@ Move to next source without changes.
 
 Stop processing entirely.
 
-### Step 5: Compile Wiki Article
+### Step 6: Compile Wiki Article
 
-For each approved source, create the wiki article.
+For each approved source, create the wiki article:
 
-#### 5a. Generate Article Content
+#### 6a. Generate Article Content
 
 Synthesize the raw source into a structured wiki article:
 
@@ -297,12 +362,12 @@ title: Circuit Breaker Pattern
 domain: [sre, resilience]
 maturity: draft
 confidence: medium
-sources:
-  - "[[raw/clippings/circuit-breaker-fowler.md]]"
+compiled_from:
+  - "raw/clippings/circuit-breaker-fowler.md"
 related:
   - "[[bulkhead-pattern]]"
   - "[[retry-with-backoff]]"
-last_compiled: 2026-04-21
+last_compiled: 2026-04-17
 ---
 
 # Circuit Breaker Pattern
@@ -313,98 +378,65 @@ last_compiled: 2026-04-21
 
 ## Key Concepts
 
-[Main ideas]
+[Main ideas — 3-5 bullet points]
+
+## Details
+
+[2+ paragraphs of substantive content]
 
 ## Examples
 
-[Practical examples]
+[Practical examples where applicable]
 
-## Related
+## Sources
 
-- [[bulkhead-pattern]]
-- [[retry-with-backoff]]
+- From [[raw/clippings/circuit-breaker-fowler.md]]: [specific claims extracted]
 ```
 
 **Filename convention:** kebab-case, e.g., `circuit-breaker-pattern.md`
 
-#### 5b. Write the Article
+**Quality minimums for new articles:**
+
+- Body must be >= 200 words (excluding frontmatter)
+- Must have at least 2 entries in `related:`
+- Must have a Key Concepts/Key Points section with 3-5 bullets
+- Must have a Details section with 2+ paragraphs
+
+#### 6b. Write the Article
 
 Use **Write** tool to create the file at the determined path (e.g., `wiki/concepts/circuit-breaker-pattern.md`).
 
-### Step 6: Propagate to Related Articles
+#### 6c. Add Reciprocal Links
 
-After compiling a new article, propagate cross-references to the broader wiki graph. This is the most important step — one source might touch 10–15 existing wiki pages.
+**This step prevents orphan pages and asymmetric linking.**
 
-#### 6a. Identify Propagation Candidates
+For each article listed in the new article's `related:` frontmatter:
 
-Three sources of candidates:
+1. Read the target article's frontmatter
+2. Check if the new article's slug is already in the target's `related:` list
+3. If not, add it using Edit tool:
 
-1. **Articles in the new article's `related:` field** — They should know about the new article
-2. **Articles already mentioning the same key topics** — They discuss related concepts but don't yet link
-3. **Articles in related domain indexes** — Conceptually adjacent entries
+```yaml
+# Before (in bulkhead-pattern.md)
+related:
+  - "[[load-shedding]]"
 
-```bash
-# Extract key terms from the new article
-# Grep wiki for articles mentioning those terms
-grep -rl "circuit breaker\|bulkhead\|fault tolerance" wiki/ --include="*.md"
-
-# Also check articles in same domain
-grep -rl "sre\|resilience" wiki/_indexes/ --include="*.md"
+# After
+related:
+  - "[[load-shedding]]"
+  - "[[circuit-breaker-pattern]]"
 ```
 
-#### 6b. Evaluate Each Candidate
-
-For each candidate article, check:
-
-- Does it already list the new article in its `related:` field? (skip if yes)
-- Does its content meaningfully connect to the new article?
-- Is the connection strong enough to warrant a backlink?
-
-Skip self-references and weak thematic links.
-
-#### 6c. Present Propagation Suggestions
-
-Use **AskUserQuestion** to show propagation suggestions:
+Report each reciprocal link added:
 
 ```
-New article: wiki/concepts/circuit-breaker-pattern.md
-
-Suggested updates to existing articles:
-
-1. wiki/concepts/bulkhead-pattern.md
-   - Add [[circuit-breaker-pattern]] to related: field
-   Reason: Both are resilience patterns
-
-2. wiki/guides/api-gateway-patterns.md
-   - Add [[circuit-breaker-pattern]] to related: field
-   Reason: Article mentions circuit breakers but doesn't link
-
-3. wiki/learning/sre-study-notes.md
-   - Add [[circuit-breaker-pattern]] to related: field
-   Reason: Article is in the resilience domain
-
-Apply all updates? [Y/n/review individually]
+Reciprocal links:
+  + [[circuit-breaker-pattern]] added to bulkhead-pattern.md
+  + [[circuit-breaker-pattern]] added to retry-with-backoff.md
+  (retry-with-backoff.md already had [[circuit-breaker-pattern]] — skipped)
 ```
 
-If "review individually", present each suggestion as a separate confirmation.
-
-If no propagation candidates found:
-
-```
-No propagation candidates found for wiki/concepts/circuit-breaker-pattern.md
-```
-
-#### 6d. Apply Approved Propagation Updates
-
-For each approved target article, update only the `related:` frontmatter field — no body edits:
-
-Use **Edit** tool to add `- "[[circuit-breaker-pattern]]"` to the target's `related:` list.
-
-If the target article has no `related:` field, add it after the last frontmatter field.
-
-### Step 7: Update Indexes and Log
-
-#### 7a. Update Domain Index
+#### 6d. Update Domain Index
 
 Find or create the relevant domain index in `wiki/_indexes/`:
 
@@ -419,7 +451,7 @@ If the index file exists, append the new article link. If not, create it:
 ---
 title: SRE Domain Index
 domain: sre
-last_updated: 2026-04-21
+last_updated: 2026-04-17
 ---
 
 # SRE
@@ -435,35 +467,109 @@ last_updated: 2026-04-21
 
 Add the new article under the appropriate section (Concepts, Guides, Company, Learning) matching the subfolder.
 
-#### 7b. Update Master Index
+#### 6e. Update Master Index
 
-If the article introduces a new domain not yet in `wiki/_index.md`, add it:
+Add the new article to the "Recently Compiled" section in `wiki/_index.md`:
 
 ```markdown
-## Domains
-
-- [[wiki/_indexes/sre|SRE]]
-- [[wiki/_indexes/resilience|Resilience]]
+- [[circuit-breaker-pattern]] — one-line summary (compiled 2026-04-17)
 ```
 
-#### 7c. Append to Activity Log
+Update the article count in the header if present.
 
-Add entry to `wiki/_log.md` with propagation details:
+#### 6f. Append to Activity Log
+
+Add entry to `wiki/_log.md`:
 
 ```markdown
-## [2026-04-21] ingest | Circuit Breaker Pattern
+## [2026-04-17] ingest | Circuit Breaker Pattern
 
-- Source: `[[raw/clippings/circuit-breaker-fowler.md]]`
+- Source: `raw/clippings/circuit-breaker-fowler.md`
 - Destination: `wiki/concepts/circuit-breaker-pattern.md`
 - Domain: sre, resilience
 - Maturity: draft
-- Propagated to: 3 existing articles
-  - [[bulkhead-pattern]] (added related link)
-  - [[api-gateway-patterns]] (added related link)
-  - [[graceful-degradation]] (added related link)
+- Reciprocal links added: 2 (bulkhead-pattern, retry-with-backoff)
 ```
 
-If no propagation occurred, omit the "Propagated to" lines.
+### Step 7: Post-Compilation Validation
+
+**Run these checks on each newly written article before moving to the next source.**
+
+#### 7a. Wikilink Validation
+
+Extract all `[[wikilinks]]` from the article body and frontmatter. For each link:
+
+```bash
+# Search for the target file
+find wiki/ -name "<link-target>.md" -type f
+```
+
+If a link target doesn't exist:
+
+```
+Broken wikilink found: [[rate-limiting]] (no matching file)
+
+Options:
+A) Create stub article for [[rate-limiting]]
+B) Remove the link from the article
+C) Keep the link (will create the article later)
+```
+
+If creating a stub:
+
+```yaml
+---
+title: Rate Limiting
+domain: [sre]
+maturity: stub
+confidence: low
+related:
+  - "[[circuit-breaker-pattern]]"
+last_compiled: 2026-04-17
+---
+
+# Rate Limiting
+
+*This article is a stub. It was auto-generated because other articles reference this topic.*
+
+## Referenced By
+
+- [[circuit-breaker-pattern]]
+```
+
+#### 7b. Word Count Check
+
+Count words in the article body (excluding frontmatter):
+
+```
+If word count < 200:
+  Warning: Article body is only 142 words.
+
+  Options:
+  A) Expand — re-read the source and add more detail
+  B) Merge — fold this content into an existing article instead
+  C) Accept as-is (maturity will be set to "stub")
+```
+
+If the user accepts a thin article, automatically set `maturity: stub`.
+
+#### 7c. Frontmatter Validation
+
+Check all required fields are present and valid:
+
+- `title` — non-empty string
+- `domain` — list with at least one valid domain
+- `maturity` — one of: stub, draft, developing, mature
+- `confidence` — one of: low, medium, high
+- `compiled_from` — list with at least one source path
+- `related` — list with at least 2 entries
+- `last_compiled` — valid YYYY-MM-DD date
+
+If any field is missing or invalid, fix it automatically and report:
+
+```
+Frontmatter fix: added missing "confidence: medium" to circuit-breaker-pattern.md
+```
 
 ### Step 8: Verify and Report
 
@@ -471,7 +577,10 @@ After each source:
 
 ```
 Compiled: wiki/concepts/circuit-breaker-pattern.md
-Propagated to: 3 existing articles
+  Word count: 387
+  Related links: 3 (2 reciprocal links added)
+  Wikilinks: 5 (all valid)
+  Frontmatter: valid
 Updated index: wiki/_indexes/sre.md
 Logged to: wiki/_log.md
 ```
@@ -481,14 +590,28 @@ After all sources:
 ```
 Ingest Complete
 
-Processed: 3 sources
-Compiled: 2 articles
+Processed: 12 sources (1 batch of 9 + 3 individual)
+Compiled: 8 articles (4 new, 4 updated)
 Skipped: 1 source
-  - Concepts: 1
-  - Guides: 1
-Existing articles updated: 5
-Indexes updated: 3
-Log entries added: 2
+Stubs created: 2 (for broken wikilinks)
+
+Quality Summary:
+  Articles above 200 words: 8/8
+  Reciprocal links added: 14
+  Broken links found and resolved: 2
+  Frontmatter issues fixed: 1
+
+  - New concepts: 3
+  - New guides: 1
+  - Updated: circuit-breaker-pattern, karpenter, terraform-state-locking, deploy-pipeline
+  - Stubs: rate-limiting, error-budget-policy
+
+Indexes updated: 4
+Log entries added: 8
+
+Suggested next steps:
+  - Run /lint to check full wiki health
+  - Run /discover-links to find new connections
 ```
 
 ## Error Handling
@@ -525,16 +648,6 @@ Help me decide:
 
 Use **AskUserQuestion** to clarify.
 
-### No Propagation Candidates
-
-```
-No propagation candidates found. New article has no existing neighbors.
-
-The wiki may be sparse in this domain — consider researching related topics.
-```
-
-This is not an error; continue normally.
-
 ### Missing Wiki Infrastructure
 
 ```
@@ -565,71 +678,98 @@ Close the file and retry?
 
 ## Best Practices
 
-1. **Scan wiki sources once** at start, reuse for all processing
+1. **Build the manifest once** at start, reuse for all processing
 2. **Process sources sequentially** for user control
-3. **Always validate paths** before writing
-4. **Check for existing articles** before creating duplicates
-5. **Preserve raw sources** — never modify files in `raw/`
-6. **Use kebab-case filenames** for all wiki articles
-7. **Propagate after every new article** — don't skip this step
-8. **Only modify `related:` in propagation** — never edit article body during propagation
-9. **Always update indexes** after compiling an article
-10. **Always log activity** in `wiki/_log.md` including propagation
-11. **Set maturity to draft** for newly compiled articles
+3. **Always run dedup check** before creating new articles
+4. **Always add reciprocal links** when creating related: entries
+5. **Always validate after writing** — check links, word count, frontmatter
+6. **Preserve raw sources** — never modify files in `raw/`
+7. **Use kebab-case filenames** for all wiki articles
+8. **Always update indexes** after compiling an article
+9. **Always log activity** in `wiki/_log.md`
+10. **Set maturity to draft** for newly compiled articles (stub only if <200 words)
+11. **Batch related sources** when they share tags or form a series
 12. **Allow editing** before execution
+13. **Report reciprocal links** so user sees the graph growing
 
 ## Usage Examples
 
-### Example 1: Single Source with Propagation
+### Example 1: Single Source Ingest
 
 ```
 User: /ingest
 
-Found 1 unprocessed source in raw/:
-1. raw/clippings/circuit-breaker-fowler.md
+Building article manifest... (193 articles scanned)
 
-Processing: "raw/clippings/circuit-breaker-fowler.md" (1 of 1)
+Found 1 unprocessed source in raw/:
+1. raw/clippings/terraform-state-locking.md
+
+Processing: "raw/clippings/terraform-state-locking.md" (1 of 1)
 
 Content Analysis:
-- Suggested subfolder: wiki/concepts/
-- Title: Circuit Breaker Pattern
-- Filename: circuit-breaker-pattern.md
-- Domain: [sre, resilience]
+- Source type: clipping (web article)
+- Suggested subfolder: wiki/guides/
+- Title: Terraform State Locking
+- Filename: terraform-state-locking.md
+- Domain: [infrastructure, terraform]
+- Reasoning: Contains operational steps and configuration — fits guides/
+
+Dedup check:
+- No existing article on "terraform state locking" found
+- Related articles: [[terraform-state-management]], [[terraform-operations-best-practices]]
 
 [User accepts]
 
-Compiled: wiki/concepts/circuit-breaker-pattern.md
-
-Propagation:
-1. wiki/concepts/bulkhead-pattern.md — Add [[circuit-breaker-pattern]] to related:
-   Reason: Both are resilience patterns
-2. wiki/guides/api-gateway-patterns.md — Add [[circuit-breaker-pattern]] to related:
-   Reason: Article mentions circuit breakers
-
-Apply all? [Y]
-
-Updated 2 existing articles.
-Updated index: wiki/_indexes/sre.md
+Compiled: wiki/guides/terraform-state-locking.md (412 words)
+Reciprocal links:
+  + [[terraform-state-locking]] added to terraform-state-management.md
+  + [[terraform-state-locking]] added to terraform-operations-best-practices.md
+Validation: all wikilinks valid, frontmatter complete
+Updated index: wiki/_indexes/infrastructure.md
 Logged to: wiki/_log.md
 
-Ingest Complete — 1 article compiled, 2 existing articles updated
+Ingest Complete — 1 article compiled, 2 reciprocal links added
 ```
 
-### Example 2: Multiple Sources
+### Example 2: Batch Processing
 
 ```
 User: process raw
 
-Found 3 unprocessed sources in raw/
+Building article manifest... (193 articles scanned)
 
-[Source 1 compiled to wiki/concepts/, propagated to 3 articles]
-[Source 2 compiled to wiki/guides/, propagated to 1 article]
-[Source 3 skipped by user]
+Found 12 unprocessed sources in raw/:
+
+  Batch 1 (9 files, shared tags: terraform, iac, bestpractices):
+    1-9. Terraform recommended practices series (Parts 1-4 + supporting docs)
+
+  Individual:
+    10. raw/daily/2026-04-24.md
+    11. raw/support_learnings/2026-04-23.md
+    12. raw/docs/datadog-idp-implementation-plan.md
+
+Process all? [A/select/cancel]
+
+[User selects A]
+
+Processing batch 1 (9 Terraform sources)...
+
+  Dedup check: found existing [[terraform-recommended-practices]]
+  → Updating existing article + creating 2 new guides
+
+  Compiled:
+    Updated: wiki/concepts/terraform-recommended-practices.md (now 1,200 words, 9 sources)
+    Created: wiki/guides/terraform-migration-workflow.md (480 words)
+    Created: wiki/guides/terraform-folder-conventions.md (390 words)
+  Reciprocal links added: 8
+  Validation: all clean
+
+Processing source 10 (daily log)...
+[... continues ...]
 
 Ingest Complete
-Compiled: 2 articles
+Compiled: 8 articles (3 new, 5 updated)
 Skipped: 1 source
-Existing articles updated: 4
 ```
 
 ### Example 3: Source Updates Existing Article
@@ -637,51 +777,49 @@ Existing articles updated: 4
 ```
 Processing: "raw/docs/circuit-breaker-v2.md"
 
-Existing article found: wiki/concepts/circuit-breaker-pattern.md
+Dedup check:
+  Existing article found: wiki/concepts/circuit-breaker-pattern.md
+    - Currently compiled from: raw/daily/2026-04-21.md
+    - Maturity: developing
+    - Word count: 450
 
 Options:
-A) Update existing article with new source
+A) Update existing article with new source (recommended)
+B) Create separate article
+C) Skip
 
 [User selects A]
 
 Updated: wiki/concepts/circuit-breaker-pattern.md
-  - Added source: [[raw/docs/circuit-breaker-v2.md]]
-  - Refreshed content with new information
-  - Updated last_compiled: 2026-04-21
+  - Added source: raw/docs/circuit-breaker-v2.md to compiled_from
+  - Merged new content (now 680 words)
+  - Updated last_compiled: 2026-04-17
+  - Maturity promoted: developing → mature (now has 2 sources, 680 words)
 Logged to: wiki/_log.md
-```
-
-### Example 4: No Propagation Candidates
-
-```
-Processing: "raw/clippings/niche-internal-tool.md"
-
-Compiled: wiki/company/niche-internal-tool.md
-
-Propagation: No candidates found — wiki is sparse in this domain.
-
-Ingest Complete — 1 article compiled, 0 existing articles updated
 ```
 
 ## Tips
 
 - **Process regularly** — Don't let raw/ accumulate too many unprocessed sources
-- **Review propagation suggestions** — Remove weak connections before applying
-- **Check related links** — Remove irrelevant suggestions before compiling
+- **Review suggestions** — Edit domain tags and subfolder before accepting
+- **Check related links** — Remove irrelevant suggestions
 - **Raw is immutable** — Never modify source files; only compile from them
 - **Draft first, mature later** — New articles start as drafts; revisit to promote maturity
 - **Domain indexes are navigation** — Keep them organized by subfolder type
 - **Kebab-case everything** — Article filenames and wikilinks use kebab-case
-- **Propagation is additive** — Only add related links, never remove or rewrite existing content
+- **Batch related clippings** — Multi-part series produce better unified articles than many thin ones
+- **Reciprocal links always** — Every related link should go both ways
 
 ## Related Skills
 
-- **/create-note** — Create new notes from scratch
-- **/research** — Research a topic and create a wiki article
-- **/create-project** — Create project hubs
-- **/archive-project** — Complete and archive projects
-- **/discover-links** — Find missing connections after ingesting
+- **/compile** - Full compilation pipeline (ingest + validate + discover links)
+- **/create-note** - Create new notes from scratch
+- **/research** - Research a topic and create a wiki article
+- **/create-project** - Create project hubs
+- **/archive-project** - Complete and archive projects
+- **/discover-links** - Find missing connections after ingesting
+- **/lint** - Check wiki health after bulk ingestion
 
 ## Summary
 
-The ingest skill processes unprocessed sources from `raw/` into structured wiki articles. It analyzes content, determines the appropriate wiki subfolder, compiles articles with full frontmatter (title, domain, maturity, confidence, sources, related, last_compiled), then propagates cross-references to related existing articles by updating their `related:` frontmatter fields. Finally it updates domain indexes in `wiki/_indexes/` and logs all activity — including propagation — to `wiki/_log.md`. All suggestions are presented interactively for user review.
+The ingest skill processes unprocessed sources from `raw/` into structured wiki articles. It builds an article manifest for efficient dedup and context, analyzes content with source-type-specific guidance, determines the appropriate wiki subfolder, compiles articles with full frontmatter, adds reciprocal links to related articles, validates each article (wikilinks, word count, frontmatter) before moving on, updates domain indexes in `wiki/_indexes/`, and logs all activity to `wiki/_log.md`. Related sources are batched for richer output. All suggestions are presented interactively for user review.
