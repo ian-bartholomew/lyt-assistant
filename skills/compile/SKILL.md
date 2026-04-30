@@ -193,6 +193,7 @@ The user can scope the compilation:
 /compile clippings              — Only process raw/clippings/
 /compile daily                  — Only process raw/daily/
 /compile support_learnings      — Only process raw/support_learnings/
+/compile internal_learnings     — Only process raw/internal_learnings/
 /compile docs                   — Only process raw/docs/
 /compile --skip-links           — Skip link discovery step
 /compile --skip-validate        — Skip validation step

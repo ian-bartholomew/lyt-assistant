@@ -195,6 +195,7 @@ Read the source file and determine:
 | `raw/daily/` | Session logs | Extract decisions, lessons, patterns. Skip ephemeral task details (what commands were run, what files were read). Focus on knowledge that transfers to future work. |
 | `raw/clippings/` | Web articles | Extract core concepts, frameworks, and best practices. Attribute ideas to the original author. Preserve the source URL from frontmatter in the article's sources section. |
 | `raw/support_learnings/` | Support threads | Group threads by pattern, not per-thread. Focus on the "Learning" sections. Create `company/` articles for org-specific patterns and `concepts/` or `guides/` for general technical knowledge. |
+| `raw/internal_learnings/` | Internal team threads | Extract technical knowledge, architectural decisions, and team conventions. Focus on "Takeaway" sections. Create `company/` articles for org-specific patterns, `concepts/` for technical knowledge. |
 | `raw/docs/` | Documents/proposals | Capture the problem statement, proposed solution, trade-offs, and decisions made. Don't just describe — extract the reasoning. |
 | `raw/daily_notes/` | Brief work notes | These are typically thin. Prefer updating existing articles over creating new ones. Only create a new article if the note introduces a genuinely new concept. |
 | `meetings/` | Meeting summaries | Extract actionable decisions and technical knowledge. Skip social/scheduling chatter. Group by topic, not by meeting. |
