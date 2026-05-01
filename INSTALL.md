@@ -105,11 +105,12 @@ You should see all LYT Assistant skills listed:
 - `/lyt-assistant:ingest` - Process raw sources into wiki articles
 - `/lyt-assistant:query` - Ask questions against the wiki with synthesized answers
 - `/lyt-assistant:lint` - Structural and content-level wiki health checks
+- `/lyt-assistant:review-structure` - Standalone structural quality review for any .md file
 - `/lyt-assistant:support-learnings` - Extract learnings from Slack support channels
 - `/lyt-assistant:internal-channel-learnings` - Extract learnings from internal Slack channels
 - `/lyt-assistant:create-note` - Guided creation of wiki articles with classification
 - `/lyt-assistant:discover-links` - Find missing connections between wiki articles
-- `/lyt-assistant:research` - Research topics and create wiki articles
+- `/lyt-assistant:research` - Research topics with depth control, validation, and fact-checking
 - `/lyt-assistant:create-project` - Create new project structure
 - `/lyt-assistant:archive-project` - Archive completed projects
 

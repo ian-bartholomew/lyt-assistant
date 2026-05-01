@@ -12,15 +12,16 @@ This plugin provides the complete pipeline: **automatic conversation capture** v
 
 | Skill | Operation | Description |
 |-------|-----------|-------------|
-| `/compile` | Compile | Full pipeline — ingest, validate, and discover links in one pass |
-| `/ingest` | Ingest | Process raw sources into wiki articles with propagation to related pages |
+| `/compile` | Compile | Full pipeline — ingest, validate via `/review-structure`, and discover links in one pass |
+| `/ingest` | Ingest | Process raw sources into wiki articles with propagation to related pages, validated via `/review-structure` |
 | `/query <question>` | Query | Ask questions against the wiki, get synthesized answers with citations — good answers become new pages |
 | `/lint` | Lint | Structural + content-level health checks (contradictions, investigation suggestions) |
+| `/review-structure <file>` | Validate | Standalone structural quality review for any .md file — checks frontmatter, sections, word count, wikilinks, sources |
 | `/support-learnings` | Capture | Extract learnings from Slack support channels into raw/ sources |
 | `/internal-channel-learnings` | Capture | Extract learnings from internal Slack channels into raw/ sources |
 | `/create-note` | — | Guided creation of wiki articles with classification and indexing |
 | `/discover-links` | — | Find missing connections between wiki articles |
-| `/research <topic>` | — | Research topics via web/Context7 and create wiki articles |
+| `/research [--depth brief\|standard\|deep] <topic>` | — | Research topics via web/Context7, validate with structure review and fact-checking, output to raw/docs/ for compilation |
 | `/create-project` | — | Set up project directories with tracking |
 | `/archive-project` | — | Complete projects with knowledge extraction into wiki |
 
@@ -40,7 +41,7 @@ Three layers:
 
 | Layer | Owner | Purpose |
 |-------|-------|---------|
-| `raw/` | User | Immutable sources (clippings, docs, articles, Slack extracts) |
+| `raw/` | User (except `raw/docs/`) | Immutable sources (clippings, docs, articles, Slack extracts) |
 | `wiki/` | LLM | Compiled knowledge — the persistent, compounding artifact |
 | Schema (skills + CLAUDE.md) | Both | How the wiki structures, conventions, workflows |
 
@@ -50,7 +51,7 @@ raw/                      # Immutable sources
 ├── clippings/            # Web clips (Obsidian Web Clipper)
 ├── support_learnings/    # Slack support channel extracts
 ├── internal_learnings/   # Internal channel extracts
-├── docs/                 # RFCs, proposals
+├── docs/                 # RFCs, proposals, /research output
 └── daily_notes/          # Brief work notes
 wiki/
 ├── concepts/             # Atomic concept articles (What is X?)
@@ -100,7 +101,7 @@ claude plugin install lyt-assistant@ian-bartholomew-lyt-assistant
 
 ## Architecture
 
-- **skills/** — User-invocable commands (11 skills)
+- **skills/** — User-invocable commands (12 skills)
 - **scripts/** — Python automation
   - `compile.py` — Automated LLM compiler (background, via Claude Agent SDK)
   - `lint.py` — Structural health checks (7 checks, generates reports)
