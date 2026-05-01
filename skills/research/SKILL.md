@@ -66,6 +66,15 @@ Usage:
 9. **Fix loop** - Address issues if any, re-review as needed
 10. **Finalize** - Rename draft to final filename
 
+## Path Convention
+
+All paths in this skill are relative to the **vault root** (`~/Documents/Work/`), not the wiki directory. When writing files, always resolve paths from the vault root:
+
+- `raw/docs/.draft-topic.md` → `~/Documents/Work/raw/docs/.draft-topic.md`
+- `wiki/concepts/topic.md` → `~/Documents/Work/wiki/concepts/topic.md`
+
+**Important:** Write research output to `raw/docs/`, NOT `wiki/raw/docs/`. The `raw/` directory is at the vault root, alongside `wiki/`, not inside it.
+
 ## Process Flow
 
 ### Step 1: Parse Topic and Depth
