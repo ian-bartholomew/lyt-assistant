@@ -1,18 +1,18 @@
 ---
 name: research
-description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile.
-version: 0.3.0
+description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile. Includes automated structure review and fact-checking before finalizing.
+version: 0.4.0
 argument-hint: <topic>
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch, Skill, Agent, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
 
 # Research Skill
 
-Research topics using web search or Context7 and create standalone source documents in `raw/docs/` with proper source attribution. These files are picked up by `/compile` and brought into the wiki.
+Research topics using web search or Context7, validate the output for structural quality and factual accuracy, and create standalone source documents in `raw/docs/`. These files are picked up by `/compile` and brought into the wiki.
 
 ## Purpose
 
-Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into a structured document with source attribution and compilation hints, and drops it into `raw/docs/` for the ingest pipeline.
+Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into a structured document with source attribution and compilation hints, validates the document through automated structure review and fact-checking, and drops it into `raw/docs/` for the ingest pipeline.
 
 ## When to Use
 
@@ -25,10 +25,10 @@ Invoke this skill when:
 
 ## Output Location
 
-Research outputs go to `raw/docs/` — the source layer. The `/compile` pipeline picks them up and compiles them into `wiki/` articles with proper indexing, linking, and logging.
+Research outputs go to `raw/docs/` — the source layer. Documents are written as drafts first (`raw/docs/.draft-<topic>.md`), reviewed by automated validators, then finalized (`raw/docs/<topic>.md`). The `/compile` pipeline picks up finalized files and compiles them into `wiki/` articles.
 
 ```
-raw/docs/<topic>.md  →  /compile  →  wiki/<subfolder>/<topic>.md
+.draft-<topic>.md  →  review & validate  →  <topic>.md  →  /compile  →  wiki/<subfolder>/<topic>.md
 ```
 
 This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (compiled) → `projects/` (active work).
@@ -40,7 +40,11 @@ This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (
 3. **Gather information** - Fetch and synthesize content
 4. **Analyze and structure** - Create document outline with compilation hints
 5. **Present for review** - Show content and suggested metadata
-6. **Write to raw/docs/** - Save as standalone source document
+6. **Write draft** - Save as `.draft-<topic>.md` in raw/docs/
+7. **Validate & review** - Run structure review and fact-checking in parallel
+8. **Present findings** - Show combined review report
+9. **Fix loop** - Address issues if any, re-review as needed
+10. **Finalize** - Rename draft to final filename
 
 ## Process Flow
 
@@ -275,7 +279,7 @@ Little's Law relates queue length, arrival rate, and wait time...
 [Formula: L = lambda * W]
 [Use cases: capacity planning, performance analysis...]
 
-Output: raw/docs/littles-law.md
+Draft: raw/docs/.draft-littles-law.md
 
 Compilation hints:
   Suggested destination: concepts
@@ -289,9 +293,18 @@ C) Show full content preview
 D) Cancel
 ```
 
-### Step 6: Write to raw/docs/
+### Step 6: Write Draft
 
-Once approved, write the document:
+Once the user approves the content, write it as a **draft** — not the final file:
+
+```bash
+# Write to draft location (dot-prefix hides from /compile scanning)
+DRAFT_PATH="raw/docs/.draft-${KEBAB_TOPIC}.md"
+```
+
+Use **Write** tool to create the file at `raw/docs/.draft-<kebab-case-topic>.md`.
+
+Example draft content:
 
 ```markdown
 ---
@@ -319,36 +332,148 @@ performance analysis in distributed systems.
 
 ## Formula
 
+...
 ```
 
-L = lambda * W
+### Step 7: Validate & Review
+
+Dispatch two reviewers **in parallel** (single message, both tool calls together):
+
+#### 7a. Structure Review (Skill tool)
+
+Invoke the `/review-structure` skill with the draft file path:
 
 ```
-
-Where:
-- L = average number of items in system
-- lambda = average arrival rate
-- W = average wait time
-
-## Examples
-
-### Web Server Capacity
-
-If requests arrive at 100/sec (lambda) and average response time is 0.5sec (W):
-- L = 100 * 0.5 = 50 concurrent requests
-
-This tells us the system needs capacity for 50 concurrent connections.
-
-## Use Cases
-
-- **Capacity planning:** Determine required system resources
-- **Performance analysis:** Understand queue behavior
-- **SLO setting:** Calculate target latencies from load
+Skill: review-structure
+Args: raw/docs/.draft-littles-law.md
 ```
 
-Use **Write** tool to create the file at `raw/docs/<kebab-case-topic>.md`.
+This checks frontmatter completeness, section structure, word count, source attribution, wikilink validity, related articles, and empty sections. Returns a structured report with status (`PASS`, `WARN`, `NEEDS_FIX`).
 
-### Step 7: Report Success
+#### 7b. Fact Checker (Agent tool)
+
+Dispatch via the **Agent** tool with a focused prompt. The agent runs in isolated context with tools `[Read, WebFetch, WebSearch, Grep]`.
+
+**Important:** Before dispatching, substitute `<topic>` in the prompt template below with the actual kebab-case filename (e.g., `littles-law`).
+
+**Agent prompt template:**
+
+```
+You are a fact-checker for a research document. Your job is to verify that the
+document contains no false information or hallucinations.
+
+Read the document at: raw/docs/.draft-<topic>.md
+
+Phase 1 — Source cross-check:
+- Extract all factual claims from the document (definitions, dates, numbers,
+  formulas, attributed quotes)
+- Re-fetch each URL listed in the `sources` frontmatter field
+- For each claim, verify it appears in or is supported by the cited sources
+- Flag claims that don't match any source as "unsupported"
+
+Phase 2 — Independent verification:
+- Identify the top 3-5 most important factual claims (definitions, formulas,
+  dates, numbers — not opinions or examples)
+- Run independent web searches to corroborate each claim
+- Flag claims that contradict independent sources as "potentially false"
+- Flag claims that can't be independently verified as "unverifiable"
+
+For each claim, assign a verdict:
+- VERIFIED: matches source AND independently confirmed
+- SOURCE_ONLY: matches source, not independently checked (low-risk claims)
+- UNSUPPORTED: not traceable to any cited source
+- CONTRADICTED: conflicts with independent sources
+- UNVERIFIABLE: can't confirm or deny
+
+Report format:
+
+Fact Check: <file-path>
+
+  Claims checked: N
+  Source-verified: N
+  Independently verified: N
+
+  Issues:
+    - Line N: "<claim text>"
+      Verdict: <VERDICT> — <explanation>
+
+  Status: <PASS|WARN|NEEDS_FIX>
+
+Status rules:
+- PASS: all claims are VERIFIED or SOURCE_ONLY
+- WARN: any UNVERIFIABLE claims but none UNSUPPORTED or CONTRADICTED
+- NEEDS_FIX: any UNSUPPORTED or CONTRADICTED claims
+```
+
+### Step 8: Present Findings
+
+Once both reviewers return, merge their reports into a combined summary:
+
+```
+Review Results: raw/docs/.draft-littles-law.md
+
+  Structure: PASS (8/8 checks passed)
+  Facts: NEEDS_FIX (1 unsupported claim)
+
+  Issues to fix:
+    1. [fact] Line 38: "Average response time should be under 200ms"
+       UNSUPPORTED — not found in any cited source
+
+  A) Auto-fix issues and re-review
+  B) Show full review reports
+  C) Accept as-is (finalize with warnings noted)
+  D) Cancel (delete draft)
+```
+
+If both reviewers return `PASS`:
+
+```
+Review Results: raw/docs/.draft-littles-law.md
+
+  Structure: PASS (8/8 checks passed)
+  Facts: PASS (6 claims verified)
+
+  No issues found. Ready to finalize.
+
+  A) Finalize (recommended)
+  B) Show full review reports
+  C) Cancel (delete draft)
+```
+
+### Step 9: Fix Loop
+
+If the user selects **"Auto-fix"**:
+
+1. Edit the draft file to address each issue:
+   - For unsupported claims: remove the claim or add a source
+   - For contradicted claims: correct the information
+   - For structural errors: fix frontmatter, add missing sections, expand thin content
+   - For empty sections: add content or remove the section
+2. Re-run **only the reviewer(s) that reported issues** — don't re-run a reviewer that already passed
+3. Present updated findings
+4. Repeat until both pass or user selects "Accept as-is"
+
+If the user selects **"Accept as-is"**:
+
+- Proceed to Step 10 with warnings noted in the success report
+- The document is finalized despite unresolved warnings
+
+If the user selects **"Cancel"**:
+
+- Delete the draft file: `raw/docs/.draft-<topic>.md`
+- Report cancellation, nothing written
+
+### Step 10: Finalize
+
+Rename the draft to its final filename:
+
+```bash
+mv raw/docs/.draft-<topic>.md raw/docs/<topic>.md
+```
+
+Use **Bash** tool to rename the file.
+
+Report success:
 
 ```
 Research Complete!
@@ -360,6 +485,29 @@ Content:
 - 3 sources cited
 - Formula included
 - 2 examples provided
+
+Review:
+- Structure: PASS
+- Facts: PASS (6 claims verified)
+
+Next step: run /compile to bring this into the wiki
+```
+
+If accepted with warnings:
+
+```
+Research Complete!
+
+Created: raw/docs/littles-law.md (with warnings)
+
+Content:
+- 342 words
+- 3 sources cited
+
+Review:
+- Structure: PASS
+- Facts: WARN (1 unverifiable claim accepted)
+  - Line 38: "Average response time..." — UNVERIFIABLE
 
 Next step: run /compile to bring this into the wiki
 ```
@@ -550,7 +698,7 @@ Automatically create and continue.
 
 ## Usage Examples
 
-### Example 1: General Topic Research
+### Example 1: Research passes review
 
 ```
 User: /research Little's Law
@@ -561,59 +709,81 @@ Web search strategy
 Found 3 authoritative sources
 Synthesized 342 words
 
-Output: raw/docs/littles-law.md
-Suggested destination: concepts
-Suggested domains: [sre, performance, capacity-planning]
-
 Create? [Y]
 
-Created raw/docs/littles-law.md
+Draft written: raw/docs/.draft-littles-law.md
+
+Reviewing...
+  Structure: PASS (8/8)
+  Facts: PASS (6 claims verified)
+
+No issues found. Finalizing.
+
+Created: raw/docs/littles-law.md
 Next step: run /compile to bring into wiki
 ```
 
-### Example 2: Library Documentation
+### Example 2: Research needs fixes
 
 ```
-User: /research React hooks
+User: /research CAP Theorem
 
-Researching "React hooks"...
-
-Using Context7 (library detected)
-Retrieved official React docs
-
-Output: raw/docs/react-hooks.md
-Suggested destination: guides
-Suggested domains: [frontend, react]
+Researching "CAP Theorem"...
+Found 3 sources, synthesized 410 words.
 
 Create? [Y]
 
-Created raw/docs/react-hooks.md
-Next step: run /compile to bring into wiki
-```
+Draft written: raw/docs/.draft-cap-theorem.md
 
-### Example 3: Topic Already Exists
+Reviewing...
+  Structure: WARN (7/8 — thin at 280 words)
+  Facts: NEEDS_FIX (1 unsupported claim)
 
-```
-User: /research Circuit Breaker
+Issues:
+  1. [fact] Line 22: "Proved by Seth Gilbert in 2002"
+     UNSUPPORTED — sources say Gilbert & Lynch, not Gilbert alone
 
-Existing article found: wiki/concepts/circuit-breaker-pattern.md
-
-Options:
-A) Create updated research doc (will merge during next /compile)
+A) Auto-fix and re-review
 
 [User selects A]
 
-Created raw/docs/circuit-breaker-pattern.md
-  - 2 new sources added
-  - Will merge with existing article during /compile
+Fixed: corrected attribution to "Gilbert and Lynch (2002)"
+Re-running fact checker...
+  Facts: PASS (7 claims verified)
+
+Created: raw/docs/cap-theorem.md
+Next step: run /compile to bring into wiki
+```
+
+### Example 3: User accepts with warnings
+
+```
+User: /research Amdahl's Law
+
+...
+Draft written: raw/docs/.draft-amdahls-law.md
+
+Reviewing...
+  Structure: PASS (8/8)
+  Facts: WARN (1 unverifiable claim)
+
+Issues:
+  1. [fact] Line 45: "Commonly cited in cloud architecture"
+     UNVERIFIABLE — subjective claim, no definitive source
+
+C) Accept as-is
+
+Created: raw/docs/amdahls-law.md (1 warning noted)
+Next step: run /compile to bring into wiki
 ```
 
 ## Related Skills
 
+- **/review-structure** - Standalone structure review (called automatically during research)
 - **/create-note** - Create wiki articles from scratch without research
 - **/ingest** - Process raw sources into wiki articles
 - **/compile** - Full pipeline: ingest + validate + discover links (picks up research docs)
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them to `raw/docs/`. These files are then picked up by the `/compile` pipeline, which handles wiki placement, indexing, linking, and logging.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them as drafts to `raw/docs/`. Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.
