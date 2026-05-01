@@ -242,7 +242,7 @@ Not yet run:
 - **/lint** — Full wiki health check (Step 2 runs a targeted subset)
 - **/discover-links** — Full link discovery (Step 3 runs a targeted subset)
 - **/create-note** — Create articles manually
-- **/research** — Research topics for new articles
+- **/research** — Research topics and save to raw/docs/ for compilation
 
 ## Summary
 

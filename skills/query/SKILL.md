@@ -495,7 +495,7 @@ The wiki needs content before it can answer questions.
 
 Options:
 A) Run /ingest to process raw sources
-B) Run /research to create articles on a topic
+B) Run /research to research a topic (saves to raw/docs/, then /compile)
 C) Run /create-note to write the first article manually
 ```
 
@@ -669,7 +669,7 @@ Next steps:
 
 - **/create-note** — create new wiki articles from scratch or existing content
 - **/ingest** — process raw sources (clippings, notes) into wiki articles
-- **/research** — research topics from external sources and create new articles
+- **/research** — research topics from external sources into raw/docs/ for compilation
 - **/discover-links** — find missing connections between existing wiki articles
 
 ## Summary

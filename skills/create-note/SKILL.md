@@ -558,7 +558,7 @@ Proceed?
 ## Related Skills
 
 - **/ingest** - Process raw/ files into wiki articles
-- **/research** - Research and create reference articles
+- **/research** - Research topics and save to raw/docs/ for compilation
 - **/lint** - Verify indexes after adding articles
 
 ## Summary

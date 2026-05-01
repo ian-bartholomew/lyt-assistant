@@ -1,18 +1,18 @@
 ---
 name: research
-description: This skill should be used when the user asks to "research a topic", "research [topic]", "create wiki article about [topic]", "look up [topic]", or wants to gather information about a subject and create a structured wiki article with sources.
-version: 0.2.0
+description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile.
+version: 0.3.0
 argument-hint: <topic>
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
 
 # Research Skill
 
-Research topics using web search or Context7 and create well-structured wiki articles with proper source attribution, domain indexing, and activity logging.
+Research topics using web search or Context7 and create standalone source documents in `raw/docs/` with proper source attribution. These files are picked up by `/compile` and brought into the wiki.
 
 ## Purpose
 
-Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into structured wiki articles, assigns domain tags, updates indexes, and integrates seamlessly into the vault with proper attribution.
+Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into a structured document with source attribution and compilation hints, and drops it into `raw/docs/` for the ingest pipeline.
 
 ## When to Use
 
@@ -23,28 +23,24 @@ Invoke this skill when:
 - User wants to create a wiki article about something new
 - User mentions adding external knowledge to the wiki
 
-## Vault Structure
+## Output Location
 
-This skill creates articles in a Karpathy-style LLM wiki:
+Research outputs go to `raw/docs/` — the source layer. The `/compile` pipeline picks them up and compiles them into `wiki/` articles with proper indexing, linking, and logging.
 
-| Folder | Purpose |
-|--------|---------|
-| `wiki/concepts/` | Atomic concept articles (patterns, principles, definitions) |
-| `wiki/guides/` | How-to content, runbooks, operational procedures |
-| `wiki/_indexes/` | Domain index files |
-| `wiki/_index.md` | Master index |
-| `wiki/_log.md` | Activity log |
+```
+raw/docs/<topic>.md  →  /compile  →  wiki/<subfolder>/<topic>.md
+```
+
+This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (compiled) → `projects/` (active work).
 
 ## Workflow Overview
 
 1. **Parse topic** - Extract topic from arguments
 2. **Research strategy** - Choose web search or Context7
 3. **Gather information** - Fetch and synthesize content
-4. **Analyze and structure** - Create wiki article outline
-5. **Suggest organization** - Destination subfolder, domain tags, related links
-6. **Present interactively** - Review and edit
-7. **Create article** - Write with proper frontmatter and sources
-8. **Update indexes and log** - Maintain wiki infrastructure
+4. **Analyze and structure** - Create document outline with compilation hints
+5. **Present for review** - Show content and suggested metadata
+6. **Write to raw/docs/** - Save as standalone source document
 
 ## Process Flow
 
@@ -178,7 +174,7 @@ Synthesizing documentation...
 
 ### Step 4: Synthesize and Structure Content
 
-Create structured wiki article from gathered information:
+Create structured document from gathered information:
 
 #### 4a. Extract Key Information
 
@@ -191,30 +187,34 @@ From sources, extract:
 - **Use Cases:** When to use / when not to use
 - **Related Topics:** Connected concepts
 
-#### 4b. Determine Wiki Subfolder
+#### 4b. Determine Compilation Hints
 
-| Subfolder | Content Type |
-|-----------|-------------|
-| `wiki/concepts/` | Patterns, principles, definitions, theories |
-| `wiki/guides/` | How-to content, tutorials, operational procedures |
+Suggest where the compile pipeline should place this:
 
-**Decision:** If the content primarily explains what something IS, use `concepts/`. If it explains how to DO something, use `guides/`.
+| Destination | Content Type |
+|-------------|-------------|
+| `concepts` | Patterns, principles, definitions, theories |
+| `guides` | How-to content, tutorials, operational procedures |
+| `company` | Company-specific tools, processes, architecture |
+| `learning` | Study notes, book summaries, course material |
 
-#### 4c. Create Article Outline
+**Decision:** If the content primarily explains what something IS → `concepts`. If it explains how to DO something → `guides`.
+
+#### 4c. Create Document with Frontmatter
 
 ```markdown
 ---
 title: [Topic Title]
-domain: [domain-tags]
-maturity: draft
-confidence: medium
+source_type: research
+date: YYYY-MM-DD
 sources:
   - "https://source-url-1"
   - "https://source-url-2"
-related:
+suggested_domain: [domain-tags]
+suggested_destination: concepts  # or guides, company, learning
+suggested_related:
   - "[[related-article-one]]"
   - "[[related-article-two]]"
-last_compiled: YYYY-MM-DD
 ---
 
 # [Topic Title]
@@ -238,11 +238,6 @@ last_compiled: YYYY-MM-DD
 ## Use Cases
 
 [When and how to apply]
-
-## Related
-
-- [[related-article-one]]
-- [[related-article-two]]
 ```
 
 #### 4d. Generate Kebab-Case Filename
@@ -255,31 +250,7 @@ Convert the topic title to a kebab-case filename:
 # "Kubernetes Service Mesh" -> "kubernetes-service-mesh.md"
 ```
 
-### Step 5: Suggest Organization
-
-#### 5a. Suggest Destination
-
-```
-Suggested Destination:
-   wiki/concepts/littles-law.md
-
-Rationale: Describes a principle/theory — fits concepts/
-
-Alternative:
-   wiki/guides/ (if this were a how-to)
-```
-
-#### 5b. Suggest Domain Tags
-
-Analyze content and suggest domain tags:
-
-```
-Suggested Domains: [sre, performance, capacity-planning]
-
-These will be used for indexing in wiki/_indexes/
-```
-
-#### 5c. Find Related Articles
+#### 4e. Find Related Articles
 
 Search wiki for related content:
 
@@ -288,17 +259,9 @@ Search wiki for related content:
 grep -rl "performance\|capacity\|queueing" wiki/ --include="*.md"
 ```
 
-**Present suggestions:**
+### Step 5: Present Summary for Review
 
-```
-Suggested Related Articles:
-  - [[capacity-planning-guide]]
-  - [[latency-throughput-goodput]]
-```
-
-### Step 6: Present Complete Summary Interactively
-
-Show preview:
+Show preview before writing:
 
 ```
 Research Summary:
@@ -312,92 +275,38 @@ Little's Law relates queue length, arrival rate, and wait time...
 [Formula: L = lambda * W]
 [Use cases: capacity planning, performance analysis...]
 
-Destination: wiki/concepts/littles-law.md
+Output: raw/docs/littles-law.md
 
-Domain Tags: [sre, performance, capacity-planning]
-
-Related Articles:
-  - [[capacity-planning-guide]]
-  - [[latency-throughput-goodput]]
+Compilation hints:
+  Suggested destination: concepts
+  Suggested domains: [sre, performance, capacity-planning]
+  Suggested related: [[capacity-planning-guide]], [[latency-throughput-goodput]]
 
 Would you like to:
 A) Create with these settings (recommended)
-B) Edit destination subfolder
-C) Edit domain tags
-D) Edit related links
-E) Edit content
-F) Show full content preview
-G) Cancel
+B) Edit content
+C) Show full content preview
+D) Cancel
 ```
 
-### Step 7: Handle User Editing
+### Step 6: Write to raw/docs/
 
-#### Option B: Edit Destination
-
-```
-Current: wiki/concepts/
-
-Choose destination:
-1. wiki/concepts/
-2. wiki/guides/
-
-Select (1-2):
-```
-
-#### Option C: Edit Domain Tags
-
-```
-Current domains: [sre, performance, capacity-planning]
-
-Actions:
-- Keep all (default)
-- Remove: [enter tags]
-- Add: [enter tags]
-```
-
-#### Option D: Edit Related Links
-
-```
-Suggested related:
-1. [[capacity-planning-guide]]
-2. [[latency-throughput-goodput]]
-
-Actions:
-- Keep all
-- Remove specific (enter numbers)
-- Add additional (enter kebab-case article names)
-```
-
-#### Option E: Edit Content
-
-```
-Opening content for review...
-
-[Show full content]
-
-Edit directly? [Y/n]
-
-Or provide feedback and I'll revise.
-```
-
-### Step 8: Create Article with Proper Attribution
-
-Once approved, write the wiki article:
+Once approved, write the document:
 
 ```markdown
 ---
 title: Little's Law
-domain: [sre, performance, capacity-planning]
-maturity: draft
-confidence: medium
+source_type: research
+date: 2026-05-01
 sources:
   - "https://en.wikipedia.org/wiki/Little%27s_law"
   - "https://dl.acm.org/doi/10.1145/..."
   - "https://sre.google/workbook/..."
-related:
+suggested_domain: [sre, performance, capacity-planning]
+suggested_destination: concepts
+suggested_related:
   - "[[capacity-planning-guide]]"
   - "[[latency-throughput-goodput]]"
-last_compiled: 2026-04-17
 ---
 
 # Little's Law
@@ -435,78 +344,16 @@ This tells us the system needs capacity for 50 concurrent connections.
 - **Capacity planning:** Determine required system resources
 - **Performance analysis:** Understand queue behavior
 - **SLO setting:** Calculate target latencies from load
-
-## Related
-
-- [[capacity-planning-guide]]
-- [[latency-throughput-goodput]]
 ```
 
-Use **Write** tool to create the file.
+Use **Write** tool to create the file at `raw/docs/<kebab-case-topic>.md`.
 
-### Step 9: Update Wiki Infrastructure
-
-#### 9a. Update Domain Indexes
-
-For each domain tag, find or create the index file in `wiki/_indexes/`:
-
-```bash
-# e.g., for domain "sre"
-INDEX_FILE="wiki/_indexes/sre.md"
-```
-
-If the index exists, append the new article. If not, create it:
-
-```markdown
----
-title: SRE Domain Index
-domain: sre
-last_updated: 2026-04-17
----
-
-# SRE
-
-## Concepts
-
-- [[littles-law]] — Little's Law
-
-## Guides
-
-[entries here]
-```
-
-Add the article under the section matching its subfolder (Concepts or Guides).
-
-#### 9b. Update Master Index
-
-If the article introduces a new domain not yet in `wiki/_index.md`, add it:
-
-```markdown
-## Domains
-
-- [[wiki/_indexes/sre|SRE]]
-- [[wiki/_indexes/performance|Performance]]
-```
-
-#### 9c. Append to Activity Log
-
-Add entry to `wiki/_log.md`:
-
-```markdown
-## [2026-04-17] research | Little's Law
-
-- Sources: 3 (Wikipedia, ACM, Google SRE)
-- Destination: `wiki/concepts/littles-law.md`
-- Domain: sre, performance, capacity-planning
-- Maturity: draft
-```
-
-### Step 10: Report Success
+### Step 7: Report Success
 
 ```
 Research Complete!
 
-Created: wiki/concepts/littles-law.md
+Created: raw/docs/littles-law.md
 
 Content:
 - 342 words
@@ -514,15 +361,7 @@ Content:
 - Formula included
 - 2 examples provided
 
-Wiki Integration:
-- Domain indexes updated: sre, performance, capacity-planning
-- Related links: 2
-- Activity logged to wiki/_log.md
-
-Next steps:
-- Review and refine content in Obsidian
-- Add personal insights
-- Promote maturity when confident (draft -> developing -> mature)
+Next step: run /compile to bring this into the wiki
 ```
 
 ## Research Quality Guidelines
@@ -552,7 +391,7 @@ Avoid:
 - Include practical examples
 - Cite sources in frontmatter
 - Extract key formulas/code
-- Connect to related articles via kebab-case wikilinks
+- Suggest related articles via kebab-case wikilinks
 
 **DON'T:**
 
@@ -566,10 +405,9 @@ Avoid:
 
 Always include:
 
-- `sources:` in frontmatter (URLs for external, `[[raw/...]]` wikilinks for local)
-- `last_compiled:` date
-- `maturity: draft` for new articles
-- `confidence:` level based on source quality
+- `sources:` in frontmatter with URLs
+- `date:` when the research was conducted
+- `source_type: research` to signal pre-synthesized content to the ingest pipeline
 
 ## Special Cases
 
@@ -605,19 +443,40 @@ Multiple interpretations exist. I'll:
 Proceed? [Y/n]
 ```
 
-### Topic Already Exists in Wiki
+### Topic Already Exists
+
+Check both `raw/docs/` (uncompiled research) and `wiki/` (already compiled):
 
 ```
-Article already exists: wiki/concepts/littles-law.md
+# Check for uncompiled research
+find raw/docs/ -name "*littles-law*" -type f
+
+# Check for compiled wiki article
+find wiki/ -name "*littles-law*" -type f
+```
+
+If found in `raw/docs/`:
+
+```
+Uncompiled research already exists: raw/docs/littles-law.md
 
 Options:
-A) Update existing article with new sources
-B) Create separate version
+A) Update with new sources (add to existing doc)
+B) Replace entirely
 C) Cancel
-D) Review existing article
+D) Review existing doc
 ```
 
-If updating, add new sources, refresh content, and update `last_compiled`.
+If found in `wiki/`:
+
+```
+Compiled article already exists: wiki/concepts/littles-law.md
+
+Options:
+A) Create updated research doc (will merge during next /compile)
+B) Cancel
+C) Review existing article
+```
 
 ### Library-Specific Research (Context7)
 
@@ -628,10 +487,10 @@ Using Context7 for official docs...
 Retrieved React documentation
 
 Note: Library-specific content.
-Suggested destination: wiki/guides/react-use-effect.md
-Domain: [frontend, react]
+Suggested destination: guides
+Suggested domains: [frontend, react]
 
-Create? [Y]
+Create at raw/docs/react-use-effect.md? [Y]
 ```
 
 ## Error Handling
@@ -668,14 +527,13 @@ Please provide specific topic:
 - Bad: "stuff", "things", "that"
 ```
 
-### Missing Wiki Infrastructure
+### Missing raw/docs/ Directory
 
 ```
-wiki/_indexes/ not found — creating it now.
-wiki/_log.md not found — creating it now.
+raw/docs/ not found — creating it now.
 ```
 
-Automatically create missing infrastructure and continue.
+Automatically create and continue.
 
 ## Best Practices
 
@@ -684,11 +542,11 @@ Automatically create missing infrastructure and continue.
 3. **Synthesize, don't copy** - Original writing
 4. **Cite thoroughly** - All sources in frontmatter
 5. **Add examples** - Make content practical
-6. **Connect via related links** - Use kebab-case wikilinks
+6. **Suggest related links** - Use kebab-case wikilinks in suggested_related
 7. **Review before creating** - Check content quality
-8. **Update existing articles** - Don't duplicate
+8. **Check for existing content** - Don't duplicate research
 9. **Use Context7 for tech** - Better than web for library docs
-10. **Start as draft** - Promote maturity over time
+10. **Run /compile after** - Research docs need compilation to enter the wiki
 
 ## Usage Examples
 
@@ -703,14 +561,14 @@ Web search strategy
 Found 3 authoritative sources
 Synthesized 342 words
 
-Destination: wiki/concepts/littles-law.md
-Domains: [sre, performance, capacity-planning]
+Output: raw/docs/littles-law.md
+Suggested destination: concepts
+Suggested domains: [sre, performance, capacity-planning]
 
 Create? [Y]
 
-Created wiki/concepts/littles-law.md
-Updated indexes: sre, performance, capacity-planning
-Logged to wiki/_log.md
+Created raw/docs/littles-law.md
+Next step: run /compile to bring into wiki
 ```
 
 ### Example 2: Library Documentation
@@ -723,14 +581,14 @@ Researching "React hooks"...
 Using Context7 (library detected)
 Retrieved official React docs
 
-Destination: wiki/guides/react-hooks.md
-Domains: [frontend, react]
+Output: raw/docs/react-hooks.md
+Suggested destination: guides
+Suggested domains: [frontend, react]
 
 Create? [Y]
 
-Created wiki/guides/react-hooks.md
-Updated indexes: frontend, react
-Logged to wiki/_log.md
+Created raw/docs/react-hooks.md
+Next step: run /compile to bring into wiki
 ```
 
 ### Example 3: Topic Already Exists
@@ -741,23 +599,21 @@ User: /research Circuit Breaker
 Existing article found: wiki/concepts/circuit-breaker-pattern.md
 
 Options:
-D) Review existing article
+A) Create updated research doc (will merge during next /compile)
 
-[Shows existing article]
+[User selects A]
 
-Article has basic info. Add new sources? [Y]
-
-Updated wiki/concepts/circuit-breaker-pattern.md
-  - Added 2 new sources
-  - Updated last_compiled
-Logged to wiki/_log.md
+Created raw/docs/circuit-breaker-pattern.md
+  - 2 new sources added
+  - Will merge with existing article during /compile
 ```
 
 ## Related Skills
 
-- **/create-note** - Create from scratch without research
-- **/ingest** - Ingest raw sources into wiki articles
+- **/create-note** - Create wiki articles from scratch without research
+- **/ingest** - Process raw sources into wiki articles
+- **/compile** - Full pipeline: ingest + validate + discover links (picks up research docs)
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured wiki articles with proper frontmatter (title, domain, maturity, confidence, sources, related, last_compiled), placing them in the appropriate wiki subfolder (concepts/ or guides/), updating domain indexes in `wiki/_indexes/`, and logging activity to `wiki/_log.md`.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them to `raw/docs/`. These files are then picked up by the `/compile` pipeline, which handles wiki placement, indexing, linking, and logging.
