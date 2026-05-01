@@ -6,12 +6,13 @@ A Claude Code plugin for managing an Obsidian vault using a [Karpathy-style LLM 
 
 The LLM wiki pattern: you curate sources, direct analysis, and ask good questions. The LLM summarizes, cross-references, files, and maintains everything. Obsidian is the IDE; the LLM is the programmer; the wiki is the codebase.
 
-This plugin implements the three core operations — **Ingest**, **Query**, and **Lint** — plus supporting skills for note creation, link discovery, research, and project management.
+This plugin implements the three core operations — **Ingest**, **Query**, and **Lint** — plus a **Compile** pipeline that chains them together, and supporting skills for note creation, link discovery, research, and project management.
 
 ## Skills
 
 | Skill | Operation | Description |
 |-------|-----------|-------------|
+| `/compile` | Compile | Full pipeline — ingest, validate, and discover links in one pass |
 | `/ingest` | Ingest | Process raw sources into wiki articles with propagation to related pages |
 | `/query <question>` | Query | Ask questions against the wiki, get synthesized answers with citations — good answers become new pages |
 | `/lint` | Lint | Structural + content-level health checks (contradictions, investigation suggestions) |
@@ -115,7 +116,7 @@ Researches using web search or Context7, creates a structured wiki article with 
 
 ## Architecture
 
-- **skills/** — User-invocable commands (8 skills)
+- **skills/** — User-invocable commands (9 skills)
 - **lib/** — Shared utilities
   - `analysis.md` — Content classification, topic extraction, domain matching
   - `obsidian-operations.md` — Obsidian CLI operations for vault I/O

@@ -21,7 +21,7 @@ The plugin will now auto-load in every Claude Code session without needing the `
 
 - Claude Code CLI installed
 - Git access to GitHub
-- Obsidian vault following the LYT (Linking Your Thinking) system structure
+- Obsidian vault following the Karpathy-style LLM wiki structure (raw/, wiki/, projects/)
 
 ## Verification
 
@@ -36,7 +36,7 @@ claude plugin list
 Expected output should show:
 
 ```
-lyt-assistant@ian-bartholomew-lyt-assistant  0.1.0  enabled
+lyt-assistant@ian-bartholomew-lyt-assistant  1.0.0  enabled
 ```
 
 ### 2. Start Claude Code
@@ -58,23 +58,25 @@ In the Claude Code session, type:
 
 You should see all LYT Assistant skills listed:
 
-- `/lyt-assistant:classify-inbox` - Interactive file classifier for processing inbox items
-- `/lyt-assistant:create-note` - Guided creation of properly structured Notes or Reference files
-- `/lyt-assistant:discover-links` - Find missing connections between existing notes
-- `/lyt-assistant:check-moc-health` - Analyze MOC quality and suggest improvements
-- `/lyt-assistant:research` - Research and create well-structured reference notes
-- `/lyt-assistant:archive-project` - Archive completed projects
+- `/lyt-assistant:compile` - Full compilation pipeline (ingest + validate + discover links)
+- `/lyt-assistant:ingest` - Process raw sources into wiki articles
+- `/lyt-assistant:query` - Ask questions against the wiki with synthesized answers
+- `/lyt-assistant:lint` - Structural and content-level wiki health checks
+- `/lyt-assistant:create-note` - Guided creation of wiki articles with classification
+- `/lyt-assistant:discover-links` - Find missing connections between wiki articles
+- `/lyt-assistant:research` - Research topics and create wiki articles
 - `/lyt-assistant:create-project` - Create new project structure
+- `/lyt-assistant:archive-project` - Archive completed projects
 
 ### 4. Test a Skill
 
 Try running a skill:
 
 ```
-/lyt-assistant:check-moc-health
+/lyt-assistant:lint
 ```
 
-The skill should execute successfully without any errors about missing files or scripts.
+The skill should execute successfully and report on wiki health.
 
 ## Troubleshooting
 
@@ -131,20 +133,21 @@ If `claude plugin marketplace add` fails:
 
 3. Ensure you have network connectivity and GitHub access.
 
-### Scripts Not Found
+### Skills Report Missing Files
 
-If the `check-moc-health` skill reports missing scripts:
+If a skill reports missing files or scripts:
 
-1. Verify scripts are in the cached plugin:
+1. Verify the plugin cache structure:
 
    ```bash
-   ls -la ~/.claude/plugins/cache/ian-bartholomew-lyt-assistant/lyt-assistant/*/skills/check-moc-health/scripts/
+   ls -la ~/.claude/plugins/cache/ian-bartholomew-lyt-assistant/lyt-assistant/*/skills/
    ```
 
-2. Check that scripts are executable:
+2. Try reinstalling the plugin:
 
    ```bash
-   chmod +x ~/.claude/plugins/cache/ian-bartholomew-lyt-assistant/lyt-assistant/*/skills/check-moc-health/scripts/*.sh
+   claude plugin reinstall lyt-assistant@ian-bartholomew-lyt-assistant
+   claude reload-plugins
    ```
 
 ## Updating the Plugin
