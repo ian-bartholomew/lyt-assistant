@@ -815,7 +815,7 @@ Logged to: wiki/_log.md
 
 - **/compile** - Full compilation pipeline (ingest + validate + discover links)
 - **/create-note** - Create new notes from scratch
-- **/research** - Research a topic and create a wiki article
+- **/research** - Research a topic and save to raw/docs/ for compilation
 - **/create-project** - Create project hubs
 - **/archive-project** - Complete and archive projects
 - **/discover-links** - Find missing connections after ingesting
