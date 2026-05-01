@@ -1,8 +1,8 @@
 ---
 name: research
 description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile. Includes automated structure review and fact-checking before finalizing.
-version: 0.4.0
-argument-hint: <topic>
+version: 0.5.0
+argument-hint: [--depth brief|standard|deep] <topic>
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch, Skill, Agent, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
 
@@ -33,9 +33,29 @@ Research outputs go to `raw/docs/` — the source layer. Documents are written a
 
 This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (compiled) → `projects/` (active work).
 
+## Depth Levels
+
+The `--depth` flag controls how exhaustive the research is:
+
+| Level | Sources | Word Target | Content Scope |
+|-------|---------|-------------|---------------|
+| `brief` | 1-2 | 200-300 | Definition, key points, one example |
+| `standard` (default) | 2-3 | 300-500 | Overview, key concepts, examples, use cases |
+| `deep` | 5+ | 1000-2000 | History, theory, multiple examples, counterarguments, edge cases, comparisons |
+
+**Deep research** fetches more sources, explores the topic from multiple angles, and produces a document suitable for thorough study. It also adjusts the structure review minimum word count accordingly.
+
+Usage:
+
+```
+/research Little's Law                       # standard (default)
+/research --depth brief Little's Law         # quick reference
+/research --depth deep Little's Law          # exhaustive
+```
+
 ## Workflow Overview
 
-1. **Parse topic** - Extract topic from arguments
+1. **Parse topic and depth** - Extract topic and depth level from arguments
 2. **Research strategy** - Choose web search or Context7
 3. **Gather information** - Fetch and synthesize content
 4. **Analyze and structure** - Create document outline with compilation hints
@@ -48,16 +68,22 @@ This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (
 
 ## Process Flow
 
-### Step 1: Parse Topic Argument
+### Step 1: Parse Topic and Depth
 
-Extract topic from user request:
+Extract topic and depth level from user request:
 
 ```bash
 # User runs: /research Little's Law
 TOPIC="Little's Law"
+DEPTH="standard"
 
-# Or: /research "kubernetes service mesh"
+# With depth flag: /research --depth deep Little's Law
+TOPIC="Little's Law"
+DEPTH="deep"
+
+# Or: /research --depth brief "kubernetes service mesh"
 TOPIC="kubernetes service mesh"
+DEPTH="brief"
 ```
 
 If no argument provided:
@@ -69,7 +95,11 @@ Examples:
 - "Little's Law"
 - "Circuit Breaker pattern"
 - "Terraform state management"
+
+Depth: standard (use --depth brief|standard|deep to change)
 ```
+
+If user says things like "in depth", "exhaustive", "thorough", or "deep dive" in their request, set `DEPTH="deep"` even without the flag.
 
 ### Step 2: Determine Research Strategy
 
@@ -80,7 +110,7 @@ Is topic a programming library/framework/API?
   |-- Yes -> Use Context7 for authoritative docs
   |-- No -> Use WebFetch for web search
       |-- Search query: "<topic> SRE" or "<topic> definition"
-      |-- Fetch top 2-3 authoritative results
+      |-- Fetch sources (count varies by depth)
       |-- Synthesize into structured article
 ```
 
@@ -115,29 +145,32 @@ Proceed with web search? [Y/n]
 
 Use **WebFetch** tool to search and retrieve content:
 
+**Source count by depth:**
+
+| Depth | Sources to fetch | Search queries |
+|-------|-----------------|----------------|
+| `brief` | 1-2 | 1 query: `"<topic> definition"` |
+| `standard` | 2-3 | 2 queries: `"<topic> definition"`, `"<topic> SRE"` |
+| `deep` | 5+ | 3+ queries: definition, SRE, history, comparisons, criticisms |
+
 ```bash
-# Step 1: Construct search query
-QUERY="${TOPIC} definition"
-ALT_QUERY="${TOPIC} SRE"
+# Step 1: Construct search queries (varies by depth)
+QUERIES=("${TOPIC} definition")
+if [ "$DEPTH" != "brief" ]; then
+  QUERIES+=("${TOPIC} SRE")
+fi
+if [ "$DEPTH" = "deep" ]; then
+  QUERIES+=("${TOPIC} history" "${TOPIC} vs" "${TOPIC} criticism limitations")
+fi
 
-# Step 2: Search
-RESULTS=$(web_search "$QUERY")
+# Step 2: Search and fetch
+# Prioritize: official docs > academic > Wikipedia > reputable blogs
+# Fetch SOURCE_COUNT results based on depth
 
-# Step 3: Identify authoritative sources
-# Prioritize:
-# - Wikipedia (definitions, overview)
-# - Academic papers (.edu, .org)
-# - Authoritative blogs (martinfowler.com, SRE blogs)
-# - Official documentation
-
-# Step 4: Fetch top 2-3 results
-for url in $TOP_URLS; do
-  CONTENT=$(WebFetch "$url")
-  SOURCES+=("$url")
-done
-
-# Step 5: Synthesize key information
+# Step 3: Synthesize key information
 ```
+
+For **deep** research, cast a wider net: look for alternative perspectives, historical context, criticisms, and comparisons to related concepts.
 
 **Example web search flow:**
 
@@ -182,14 +215,29 @@ Create structured document from gathered information:
 
 #### 4a. Extract Key Information
 
-From sources, extract:
+What to extract varies by depth:
 
-- **Definition:** Clear, concise explanation
-- **Key Concepts:** Main ideas and terminology
-- **Formula/Syntax:** If applicable
-- **Examples:** Practical applications
-- **Use Cases:** When to use / when not to use
-- **Related Topics:** Connected concepts
+**Brief:**
+
+- Definition and key points
+- One practical example
+
+**Standard:**
+
+- Definition, key concepts, terminology
+- Formula/syntax if applicable
+- Practical examples
+- Use cases
+- Related topics
+
+**Deep** — all of the above, plus:
+
+- **History/origin:** When and why the concept emerged
+- **Theory/foundations:** Underlying principles, mathematical basis
+- **Detailed examples:** Multiple worked examples, real-world case studies
+- **Counterarguments/limitations:** When it doesn't apply, known criticisms
+- **Comparisons:** How it relates to or differs from similar concepts
+- **Edge cases:** Non-obvious behaviors, common misconceptions
 
 #### 4b. Determine Compilation Hints
 
@@ -206,10 +254,13 @@ Suggest where the compile pipeline should place this:
 
 #### 4c. Create Document with Frontmatter
 
+The `depth` field is recorded in frontmatter so the structure review can adjust its word count thresholds.
+
 ```markdown
 ---
 title: [Topic Title]
 source_type: research
+depth: standard  # brief | standard | deep
 date: YYYY-MM-DD
 sources:
   - "https://source-url-1"
@@ -220,7 +271,27 @@ suggested_related:
   - "[[related-article-one]]"
   - "[[related-article-two]]"
 ---
+```
 
+**Section templates by depth:**
+
+**Brief:**
+
+```markdown
+# [Topic Title]
+
+## Overview
+
+[Definition and key points — 2-3 paragraphs]
+
+## Example
+
+[One practical example]
+```
+
+**Standard:**
+
+```markdown
 # [Topic Title]
 
 ## Overview
@@ -242,6 +313,44 @@ suggested_related:
 ## Use Cases
 
 [When and how to apply]
+```
+
+**Deep:**
+
+```markdown
+# [Topic Title]
+
+## Overview
+
+[Comprehensive definition and context]
+
+## History
+
+[Origin, key contributors, evolution of the concept]
+
+## Theory
+
+[Underlying principles, mathematical foundations, formal definitions]
+
+## Key Concepts
+
+[Detailed explanation of each concept]
+
+## Examples
+
+[Multiple worked examples, real-world case studies]
+
+## Comparisons
+
+[How this relates to or differs from similar concepts]
+
+## Limitations
+
+[When it doesn't apply, known criticisms, common misconceptions]
+
+## Use Cases
+
+[When and how to apply, with concrete scenarios]
 ```
 
 #### 4d. Generate Kebab-Case Filename
@@ -271,6 +380,7 @@ Show preview before writing:
 Research Summary:
 
 Topic: Little's Law
+Depth: standard
 Strategy: Web search
 Sources: 3 (Wikipedia, ACM, Google SRE)
 
@@ -698,12 +808,12 @@ Automatically create and continue.
 
 ## Usage Examples
 
-### Example 1: Research passes review
+### Example 1: Standard depth (default)
 
 ```
 User: /research Little's Law
 
-Researching "Little's Law"...
+Researching "Little's Law" (standard depth)...
 
 Web search strategy
 Found 3 authoritative sources
@@ -723,58 +833,73 @@ Created: raw/docs/littles-law.md
 Next step: run /compile to bring into wiki
 ```
 
-### Example 2: Research needs fixes
+### Example 2: Brief depth
 
 ```
-User: /research CAP Theorem
+User: /research --depth brief retry backoff
 
-Researching "CAP Theorem"...
-Found 3 sources, synthesized 410 words.
+Researching "retry backoff" (brief)...
+
+Found 1 authoritative source
+Synthesized 240 words
 
 Create? [Y]
 
-Draft written: raw/docs/.draft-cap-theorem.md
+Draft written: raw/docs/.draft-retry-backoff.md
 
 Reviewing...
-  Structure: WARN (7/8 — thin at 280 words)
+  Structure: PASS (8/8)
+  Facts: PASS (3 claims verified)
+
+Created: raw/docs/retry-backoff.md
+Next step: run /compile to bring into wiki
+```
+
+### Example 3: Deep research
+
+```
+User: /research --depth deep Little's Law
+
+Researching "Little's Law" (deep)...
+
+Searching: definition, history, comparisons, criticisms...
+Found 6 authoritative sources (Wikipedia, ACM, MIT OCW, Google SRE, ...)
+Synthesized 1,450 words
+
+Sections: Overview, History, Theory, Key Concepts, Examples (3),
+          Comparisons (vs Amdahl's Law), Limitations, Use Cases
+
+Create? [Y]
+
+Draft written: raw/docs/.draft-littles-law.md
+
+Reviewing...
+  Structure: PASS (8/8)
   Facts: NEEDS_FIX (1 unsupported claim)
 
 Issues:
-  1. [fact] Line 22: "Proved by Seth Gilbert in 2002"
-     UNSUPPORTED — sources say Gilbert & Lynch, not Gilbert alone
+  1. [fact] Line 58: "Universally applicable to all queueing systems"
+     CONTRADICTED — sources note it requires steady-state assumption
 
 A) Auto-fix and re-review
 
 [User selects A]
 
-Fixed: corrected attribution to "Gilbert and Lynch (2002)"
+Fixed: added steady-state caveat
 Re-running fact checker...
-  Facts: PASS (7 claims verified)
+  Facts: PASS (12 claims verified)
 
-Created: raw/docs/cap-theorem.md
+Created: raw/docs/littles-law.md
 Next step: run /compile to bring into wiki
 ```
 
-### Example 3: User accepts with warnings
+### Example 4: Natural language triggers deep
 
 ```
-User: /research Amdahl's Law
+User: I want to do a deep dive on circuit breakers
 
-...
-Draft written: raw/docs/.draft-amdahls-law.md
-
-Reviewing...
-  Structure: PASS (8/8)
-  Facts: WARN (1 unverifiable claim)
-
-Issues:
-  1. [fact] Line 45: "Commonly cited in cloud architecture"
-     UNVERIFIABLE — subjective claim, no definitive source
-
-C) Accept as-is
-
-Created: raw/docs/amdahls-law.md (1 warning noted)
-Next step: run /compile to bring into wiki
+Researching "circuit breakers" (deep — inferred from "deep dive")...
+Found 5 authoritative sources...
 ```
 
 ## Related Skills
@@ -786,4 +911,4 @@ Next step: run /compile to bring into wiki
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them as drafts to `raw/docs/`. Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, depth, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them as drafts to `raw/docs/`. The `--depth` flag controls research exhaustiveness: `brief` (200-300 words, 1-2 sources), `standard` (300-500 words, 2-3 sources, default), or `deep` (1000-2000 words, 5+ sources with history, comparisons, and limitations). Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality with depth-aware thresholds, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.

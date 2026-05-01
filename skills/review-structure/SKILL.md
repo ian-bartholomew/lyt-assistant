@@ -82,15 +82,29 @@ Compare the `title` frontmatter field to the first `# H1` heading in the body.
 Scan for `## H2` headings in the body (after frontmatter).
 
 - Must have a section named "Overview" (or "Summary" or "Introduction"): **error** if missing
-- Must have at least 2 other `## H2` sections with content beneath them: **error** if fewer than 2
+- Minimum H2 section count (with content) varies by depth:
+
+| Depth | Minimum H2 sections (besides Overview) |
+|-------|----------------------------------------|
+| `brief` | 1 |
+| `standard` or unset | 2 |
+| `deep` | 4 |
+
+If no `depth` field in frontmatter, use `standard` thresholds.
 
 ### Check 4: Word Count
 
 Count words in the body (everything after the closing `---` of frontmatter). Exclude code blocks (``` fenced blocks).
 
-- < 200 words: **error** — "Body is only N words (minimum: 200)"
-- 200-299 words: **warning** — "Body is N words (thin — consider expanding)"
-- >= 300 words: pass
+Thresholds adjust based on `depth` frontmatter field:
+
+| Depth | Error below | Warning below | Pass at |
+|-------|-------------|---------------|---------|
+| `brief` | 150 | 200 | >= 200 |
+| `standard` or unset | 200 | 300 | >= 300 |
+| `deep` | 800 | 1000 | >= 1000 |
+
+If no `depth` field in frontmatter, use `standard` thresholds.
 
 ### Check 5: Source Attribution
 
