@@ -1,8 +1,8 @@
 ---
 name: ingest
 description: This skill should be used when the user asks to "ingest", "process inbox", "process raw", "compile source", "process raw", "compile source", "organize raw files", or wants to process unprocessed sources in the "raw/" folder into wiki articles. Scans raw/ for sources not yet referenced by any wiki article, compiles them into wiki articles, updates domain indexes, and logs activity.
-version: 0.3.0
-allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion]
+version: 0.4.0
+allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, Skill, AskUserQuestion]
 ---
 
 # Ingest Skill
@@ -496,16 +496,28 @@ Add entry to `wiki/_log.md`:
 
 **Run these checks on each newly written article before moving to the next source.**
 
-#### 7a. Wikilink Validation
+#### 7a. Structure Review
 
-Extract all `[[wikilinks]]` from the article body and frontmatter. For each link:
+Invoke the `/review-structure` skill on the newly written article:
 
-```bash
-# Search for the target file
-find wiki/ -name "<link-target>.md" -type f
+```
+Skill: review-structure
+Args: wiki/concepts/circuit-breaker-pattern.md
 ```
 
-If a link target doesn't exist:
+This runs all 8 structural checks (frontmatter, title match, sections, word count, sources, wikilinks, related articles, empty sections) and returns a report with status `PASS`, `WARN`, or `NEEDS_FIX`.
+
+**Handling results:**
+
+- `PASS` or `WARN` — continue to next source (log warnings in the report)
+- `NEEDS_FIX` — fix errors automatically where possible:
+  - Missing frontmatter fields: add sensible defaults and report
+  - Word count < 200: set `maturity: stub` and warn
+  - Empty sections: flag for user attention
+
+#### 7b. Broken Wikilink Handling
+
+If `/review-structure` reports broken wikilinks, handle them with ingest-specific options:
 
 ```
 Broken wikilink found: [[rate-limiting]] (no matching file)
@@ -538,39 +550,7 @@ last_compiled: 2026-04-17
 - [[circuit-breaker-pattern]]
 ```
 
-#### 7b. Word Count Check
-
-Count words in the article body (excluding frontmatter):
-
-```
-If word count < 200:
-  Warning: Article body is only 142 words.
-
-  Options:
-  A) Expand — re-read the source and add more detail
-  B) Merge — fold this content into an existing article instead
-  C) Accept as-is (maturity will be set to "stub")
-```
-
-If the user accepts a thin article, automatically set `maturity: stub`.
-
-#### 7c. Frontmatter Validation
-
-Check all required fields are present and valid:
-
-- `title` — non-empty string
-- `domain` — list with at least one valid domain
-- `maturity` — one of: stub, draft, developing, mature
-- `confidence` — one of: low, medium, high
-- `compiled_from` — list with at least one source path
-- `related` — list with at least 2 entries
-- `last_compiled` — valid YYYY-MM-DD date
-
-If any field is missing or invalid, fix it automatically and report:
-
-```
-Frontmatter fix: added missing "confidence: medium" to circuit-breaker-pattern.md
-```
+Stub creation is ingest-specific behavior — `/review-structure` only reports the broken links, ingest decides what to do about them.
 
 ### Step 8: Verify and Report
 
@@ -813,6 +793,7 @@ Logged to: wiki/_log.md
 
 ## Related Skills
 
+- **/review-structure** - Structural validation (called automatically during ingest)
 - **/compile** - Full compilation pipeline (ingest + validate + discover links)
 - **/create-note** - Create new notes from scratch
 - **/research** - Research a topic and save to raw/docs/ for compilation
@@ -823,4 +804,4 @@ Logged to: wiki/_log.md
 
 ## Summary
 
-The ingest skill processes unprocessed sources from `raw/` into structured wiki articles. It builds an article manifest for efficient dedup and context, analyzes content with source-type-specific guidance, determines the appropriate wiki subfolder, compiles articles with full frontmatter, adds reciprocal links to related articles, validates each article (wikilinks, word count, frontmatter) before moving on, updates domain indexes in `wiki/_indexes/`, and logs all activity to `wiki/_log.md`. Related sources are batched for richer output. All suggestions are presented interactively for user review.
+The ingest skill processes unprocessed sources from `raw/` into structured wiki articles. It builds an article manifest for efficient dedup and context, analyzes content with source-type-specific guidance, determines the appropriate wiki subfolder, compiles articles with full frontmatter, adds reciprocal links to related articles, validates each article via `/review-structure` (with ingest-specific stub creation for broken wikilinks), updates domain indexes in `wiki/_indexes/`, and logs all activity to `wiki/_log.md`. Related sources are batched for richer output. All suggestions are presented interactively for user review.

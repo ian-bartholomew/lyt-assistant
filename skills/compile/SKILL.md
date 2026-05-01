@@ -1,7 +1,7 @@
 ---
 name: compile
 description: This skill should be used when the user asks to "compile", "compile sources", "compile raw", "run compilation", "process and compile", "full compile", or wants to run the complete compilation pipeline that ingests sources, validates articles, and discovers links. This is the primary compilation entry point — it chains ingest, validation, and link discovery into a single workflow.
-version: 0.1.0
+version: 0.2.0
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion, Skill]
 ---
 
@@ -78,23 +78,36 @@ If no unprocessed sources are found, skip to Step 2 and run validation on the fu
 
 Run a **targeted** health check on only the articles created or modified in Step 1. This is faster than a full wiki lint and catches issues while they're fresh.
 
-Checks to run on each new/modified article:
+#### 2a. Structure Review
+
+For each new/modified article, invoke the `/review-structure` skill:
+
+```
+Skill: review-structure
+Args: wiki/concepts/circuit-breaker-pattern.md
+```
+
+This checks frontmatter completeness, section structure, word count, source attribution, wikilink validity, related articles, and empty sections. Fix any errors it reports before proceeding.
+
+#### 2b. Compile-Specific Checks
+
+After structure review passes, run these additional checks that are specific to the compile pipeline:
 
 1. **Index coverage** — Is the article listed in the correct domain index?
-2. **Link validation** — Do all wikilinks in the article resolve?
-3. **Frontmatter completeness** — Are all required fields present and valid?
-4. **Maturity/confidence audit** — Does maturity match content depth?
+2. **Maturity/confidence audit** — Does maturity match content depth?
    - \>500 words + 2+ sources → should be at least `developing`
    - <200 words → should be `stub`
    - Well-established facts → confidence should be `high`
-5. **Duplicate source check** — Does any other article share >50% of the same `compiled_from` sources?
+3. **Duplicate source check** — Does any other article share >50% of the same `compiled_from` sources?
 
 Present issues grouped by severity:
 
 ```
 Validation Results (4 articles checked):
 
-  Issues found: 2
+  Structure review: 4 PASS, 0 NEEDS_FIX
+
+  Compile-specific issues: 2
 
   1. wiki/concepts/circuit-breaker-pattern.md
      - Maturity mismatch: marked "draft" but has 520 words and 2 sources
@@ -239,6 +252,7 @@ Not yet run:
 ## Related Skills
 
 - **/ingest** — The underlying ingestion engine (Step 1)
+- **/review-structure** — Structural validation (called in Step 2a)
 - **/lint** — Full wiki health check (Step 2 runs a targeted subset)
 - **/discover-links** — Full link discovery (Step 3 runs a targeted subset)
 - **/create-note** — Create articles manually
@@ -246,4 +260,4 @@ Not yet run:
 
 ## Summary
 
-The compile skill runs the full compilation pipeline: ingest unprocessed sources with interactive quality gates, validate newly created articles for correctness, and discover missing connections for new content. It chains ingest, lint, and discover-links into a single workflow, scoped to only the articles that changed. Use `/compile` as the primary entry point for processing raw sources into the wiki.
+The compile skill runs the full compilation pipeline: ingest unprocessed sources with interactive quality gates, validate newly created articles via `/review-structure` plus compile-specific checks (index coverage, maturity audit, duplicate sources), and discover missing connections for new content. It chains ingest, review-structure, lint, and discover-links into a single workflow, scoped to only the articles that changed. Use `/compile` as the primary entry point for processing raw sources into the wiki.
