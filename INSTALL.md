@@ -22,6 +22,49 @@ The plugin will now auto-load in every Claude Code session without needing the `
 - Claude Code CLI installed
 - Git access to GitHub
 - Obsidian vault following the Karpathy-style LLM wiki structure (raw/, wiki/, projects/)
+- Python 3.12+ (`python3 --version`)
+- [uv](https://docs.astral.sh/uv/) package manager (`uv --version`)
+
+## Post-Install Setup
+
+### 1. Configure Vault Path
+
+Create the vault config so scripts know where your Obsidian vault lives:
+
+```bash
+mkdir -p ~/.local/share/lyt-assistant
+echo '{"vault_dir": "~/Documents/Work"}' > ~/.local/share/lyt-assistant/vault-config.json
+```
+
+Replace `~/Documents/Work` with your actual vault path.
+
+### 2. Remove Old Hooks (if upgrading from claude-memory-compiler)
+
+If you previously used the standalone `claude-memory-compiler` repo with hooks in `~/.claude/settings.json`, **remove those hook entries** to prevent double-firing:
+
+Remove the `SessionStart`, `SessionEnd`, and `PreCompact` entries that reference `claude-memory-compiler` from `~/.claude/settings.json`. The plugin now provides these hooks natively.
+
+### 3. Migrate State (if upgrading)
+
+If you have existing compilation state from `claude-memory-compiler`:
+
+```bash
+cp ~/Dev/claude-memory-compiler/scripts/state.json ~/.local/share/lyt-assistant/
+cp ~/Dev/claude-memory-compiler/scripts/last-flush.json ~/.local/share/lyt-assistant/
+```
+
+This preserves your ingestion history and cost tracking. **Skipping this will cause all sources to be recompiled.**
+
+### 4. Remove Old Global Skills (if upgrading)
+
+If you previously used `support-learnings` or `internal-channel-learnings` as global skills:
+
+```bash
+rm -rf ~/.claude/skills/support-learnings
+rm -rf ~/.claude/skills/internal-channel-learnings
+```
+
+These are now bundled in the plugin as `/lyt-assistant:support-learnings` and `/lyt-assistant:internal-channel-learnings`.
 
 ## Verification
 
@@ -36,7 +79,7 @@ claude plugin list
 Expected output should show:
 
 ```
-lyt-assistant@ian-bartholomew-lyt-assistant  1.0.0  enabled
+lyt-assistant@ian-bartholomew-lyt-assistant  2.0.0  enabled
 ```
 
 ### 2. Start Claude Code
@@ -62,13 +105,19 @@ You should see all LYT Assistant skills listed:
 - `/lyt-assistant:ingest` - Process raw sources into wiki articles
 - `/lyt-assistant:query` - Ask questions against the wiki with synthesized answers
 - `/lyt-assistant:lint` - Structural and content-level wiki health checks
+- `/lyt-assistant:support-learnings` - Extract learnings from Slack support channels
+- `/lyt-assistant:internal-channel-learnings` - Extract learnings from internal Slack channels
 - `/lyt-assistant:create-note` - Guided creation of wiki articles with classification
 - `/lyt-assistant:discover-links` - Find missing connections between wiki articles
 - `/lyt-assistant:research` - Research topics and create wiki articles
 - `/lyt-assistant:create-project` - Create new project structure
 - `/lyt-assistant:archive-project` - Archive completed projects
 
-### 4. Test a Skill
+### 4. Verify Hooks
+
+The SessionStart hook should have injected wiki context at the start of your session. Check the system prompt for "Knowledge Base Index" context.
+
+### 5. Test a Skill
 
 Try running a skill:
 
@@ -115,23 +164,30 @@ If skills don't show up in `/help`:
    claude reload-plugins
    ```
 
-### Marketplace Add Fails
+### Hooks Not Firing
 
-If `claude plugin marketplace add` fails:
+If the SessionStart hook doesn't inject context:
 
-1. Verify GitHub repository is accessible:
-
-   ```bash
-   curl -I https://github.com/ian-bartholomew/lyt-assistant
-   ```
-
-2. Check marketplace.json exists:
+1. Check Python and uv are installed:
 
    ```bash
-   curl https://raw.githubusercontent.com/ian-bartholomew/lyt-assistant/main/.claude-plugin/marketplace.json
+   python3 --version  # Should be 3.12+
+   uv --version
    ```
 
-3. Ensure you have network connectivity and GitHub access.
+2. Test the hook script manually:
+
+   ```bash
+   echo '{}' | UV_PROJECT_ENVIRONMENT=~/.local/share/lyt-assistant/.venv uv run --directory /path/to/plugin python /path/to/plugin/scripts/session-start.py
+   ```
+
+3. Check logs for errors:
+
+   ```bash
+   cat ~/.local/share/lyt-assistant/flush.log
+   ```
+
+4. Restart Claude Code (hooks load at session start).
 
 ### Skills Report Missing Files
 
@@ -170,6 +226,8 @@ To remove the plugin:
 ```bash
 claude plugin uninstall lyt-assistant@ian-bartholomew-lyt-assistant
 ```
+
+State files at `~/.local/share/lyt-assistant/` are preserved. Remove them manually if desired.
 
 ## Development Workflow
 

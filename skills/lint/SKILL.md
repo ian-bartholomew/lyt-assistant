@@ -28,7 +28,7 @@ Invoke this skill when:
 
 This skill has two layers:
 
-1. **`lint.py`** — The Python script at `~/Dev/claude-memory-compiler/scripts/lint.py` that runs deterministic checks against the actual files. It produces a report at `reports/lint-YYYY-MM-DD.md`. This is the source of truth for structural issues (broken links, orphans, stale articles, missing backlinks, sparse articles).
+1. **`lint.py`** — The Python script at `$CLAUDE_PLUGIN_ROOT/scripts/lint.py` that runs deterministic checks against the actual files. It produces a report at `reports/lint-YYYY-MM-DD.md`. This is the source of truth for structural issues (broken links, orphans, stale articles, missing backlinks, sparse articles).
 
 2. **This skill** — Reads the lint report, runs additional checks that `lint.py` doesn't cover (maturity audit, duplicate detection, source attribution, index/domain consistency), and presents interactive fixes for all issues.
 
@@ -50,10 +50,10 @@ This skill has two layers:
 Run the Python lint script to get the baseline structural report:
 
 ```bash
-uv run --directory ~/Dev/claude-memory-compiler python ~/Dev/claude-memory-compiler/scripts/lint.py --structural-only
+UV_PROJECT_ENVIRONMENT=~/.local/share/lyt-assistant/.venv uv run --directory $CLAUDE_PLUGIN_ROOT python $CLAUDE_PLUGIN_ROOT/scripts/lint.py --structural-only
 ```
 
-The script resolves the vault location from `scripts/vault-config.json` (currently `~/Documents/Work`), so it works regardless of your current working directory.
+The script resolves the vault location from `~/.local/share/lyt-assistant/vault-config.json` or the `MEMORY_VAULT_DIR` env var, so it works regardless of your current working directory.
 
 This runs 6 checks:
 
@@ -64,14 +64,14 @@ This runs 6 checks:
 - Missing backlinks (suggestions)
 - Sparse articles <200 words (suggestions)
 
-The report is saved to `~/Dev/claude-memory-compiler/reports/lint-YYYY-MM-DD.md`.
+The report is saved to `~/.local/share/lyt-assistant/reports/lint-YYYY-MM-DD.md`.
 
 ### Step 2: Read and Parse Lint Report
 
 Read the latest lint report:
 
 ```bash
-REPORT=$(ls -t ~/Dev/claude-memory-compiler/reports/lint-*.md | head -1)
+REPORT=$(ls -t ~/.local/share/lyt-assistant/reports/lint-*.md | head -1)
 ```
 
 Parse the report into structured categories:

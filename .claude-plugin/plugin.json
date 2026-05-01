@@ -1,7 +1,7 @@
 {
   "name": "lyt-assistant",
-  "version": "1.0.0",
-  "description": "Comprehensive Claude Code plugin for managing an Obsidian vault using a Karpathy-style LLM wiki system with domain indexes, wiki compilation, and knowledge management",
+  "version": "2.0.0",
+  "description": "Karpathy-style LLM wiki system for Obsidian — automated conversation capture, knowledge compilation, Slack channel extraction, and interactive wiki management",
   "author": {
     "name": "Ian Bartholomew",
     "email": "ian@ianbartholomew.com"
