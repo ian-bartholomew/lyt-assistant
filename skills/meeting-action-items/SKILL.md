@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "### Action Items" sections, and walks the user through each one interactively (make todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.1.0
+version: 0.2.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep]
 ---
@@ -229,6 +229,52 @@ update_last_run() {
   jq --arg t "$now" '.last_run = $t' "$STATE_FILE" \
     > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
 }
+
+# Inline-editable single-line prompt. Pre-fills the input with $default so the
+# user can edit it with arrow keys / backspace instead of retyping. Requires
+# bash >= 4 for `read -e -i`; falls back to bracketed-default prompting on
+# bash 3.2 (macOS system bash), where an empty reply keeps the default.
+#
+# Reads/writes /dev/tty explicitly so the function works when its output is
+# captured via `$(...)` — without this, `read -e` runs against a pipe (not a
+# terminal), readline edit mode silently disables, and the prompt never
+# appears.
+prompt_edit_line() {
+  local label="$1" default="$2" var
+  if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
+    IFS= read -r -e -i "$default" -p "$label: " var </dev/tty
+  else
+    printf '%s [%s]: ' "$label" "$default" >/dev/tty
+    IFS= read -r var </dev/tty
+    [[ -z "$var" ]] && var="$default"
+  fi
+  printf '%s' "$var"
+}
+
+# Editor-backed multi-line prompt. Opens $EDITOR (default: nano) on a tempfile
+# pre-filled with $default; returns whatever the user saved. If the user wipes
+# the file to empty, restores $default (treated as "no edit" rather than a
+# deliberate blank — keep this behavior unless you have a reason to allow
+# empty descriptions).
+#
+# IMPORTANT: $EDITOR must be a blocking editor. GUI editors like `code` or
+# `subl` return immediately unless invoked with `--wait` / `-w`, which causes
+# this function to read the tempfile before the user has saved. If $EDITOR is
+# graphical, set `EDITOR='code --wait'` (or equivalent) before running the skill.
+prompt_edit_multiline() {
+  local default="$1" tmp result
+  if ! tmp=$(mktemp -t maitem.XXXXXX 2>/dev/null); then
+    echo "mktemp failed; falling back to suggested description." >&2
+    printf '%s' "$default"
+    return
+  fi
+  printf '%s' "$default" > "$tmp"
+  "${EDITOR:-nano}" "$tmp" </dev/tty >/dev/tty 2>&1
+  result=$(cat "$tmp")
+  rm -f "$tmp"
+  [[ -z "$result" ]] && result="$default"
+  printf '%s' "$result"
+}
 ```
 
 ### Step 4 — Discover meetings in window
@@ -341,7 +387,7 @@ echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s).
 
 ### Step 8 — Interactive loop
 
-Iterate the parallel arrays from Step 7 by index. For each item print a prompt block and ask the user what to do:
+Iterate the parallel arrays from Step 7 **one item at a time**. For each item print a prompt block and wait for the user's response before moving to the next. Never batch multiple items into a single prompt, never auto-decide, and never assume a default action — every undecided item gets its own round-trip with the user.
 
 ```
 [2 of 7]  2026-05-11-platform-standup
@@ -352,9 +398,17 @@ Iterate the parallel arrays from Step 7 by index. For each item print a prompt b
 > _
 ```
 
+When the user picks `t`, prompt for four fields in order. Each field is presented **pre-filled with a suggested value that the user can edit in place** — they're never asked to retype from scratch.
+
+1. **Title** — a brief, action-oriented one-liner (the Todoist task content). Suggested value is derived from the action item: strip the bullet marker, checkbox, and any `**Person:**` prefix, then truncate to ~70 chars on a word boundary. Edited inline via `prompt_edit_line` (readline pre-fill).
+2. **Description** — the full action item body, followed by a `From meeting: <slug> (<YYYY-MM-DD>)` footer parsed from the meeting directory name. Edited in `$EDITOR` (default `nano`) via `prompt_edit_multiline` so the user can revise the multi-line body comfortably.
+3. **Due** — natural-language or `YYYY-MM-DD`. Inline-editable; default is blank (no due date).
+4. **Priority** — `p1`–`p4`. Inline-editable; default is `p3`.
+
 Notes for the executor:
 
-- Read a single response token per item — typically a one-character reply (`t`, `d`, `s`, `q`). Accept the first non-whitespace char and treat anything else as invalid (re-prompt this item).
+- Read a single response token for the top-level action choice — typically a one-character reply (`t`, `d`, `s`, `q`). Accept the first non-whitespace char and treat anything else as invalid (re-prompt this item).
+- For the four sub-fields, use `prompt_edit_line` / `prompt_edit_multiline` from Step 3a. **Do not** ask "blank = accept default" — the pre-fill IS the default; the user edits or accepts.
 - State writes are streamed inside each branch — a quit (`q`) or crash preserves everything decided so far.
 
 ```bash
@@ -378,16 +432,44 @@ for i in "${!ITEM_KEYS[@]}"; do
       (( N_DISMISSED++ ))
       ;;
     t)
-      # Suggested default content: bullet with checkbox + person prefix stripped
-      SUGGESTED=$(echo "$raw" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//; s/^\*\*[^*]+\*\*[[:space:]]+//; s/^[A-Za-z][A-Za-z0-9 ,/+&-]*:[[:space:]]+//')
-      printf 'Todoist task content [%s]: ' "$SUGGESTED"; read -r CONTENT
-      [[ -z "$CONTENT" ]] && CONTENT="$SUGGESTED"
-      printf 'Due (e.g. "tomorrow", "fri", "2026-05-15", or blank for no date): '; read -r DUE
-      printf 'Priority [p3] (p1=highest, p4=lowest): '; read -r PRIO
-      [[ -z "$PRIO" ]] && PRIO="p3"
+      # Body: bullet with checkbox + **Person:** / Person: prefix stripped.
+      BODY=$(echo "$raw" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//; s/^\*\*[^*]+\*\*[[:space:]]+//; s/^[A-Za-z][A-Za-z0-9 ,/+&-]*:[[:space:]]+//')
 
-      # td task add with optional --due
-      TD_CMD=(td task add "$CONTENT" --project "Work" --priority "$PRIO")
+      # Suggested brief title: truncate BODY to ~70 chars on a word boundary
+      # when possible, falling back to a hard mid-word cut. Append an ellipsis
+      # when truncated, then strip trailing punctuation.
+      if [[ ${#BODY} -le 70 ]]; then
+        SUGGESTED_TITLE="$BODY"
+      else
+        SLICE="${BODY:0:70}"
+        TRIMMED="${SLICE% *}"
+        # `% *` is a no-op when the slice contains no space (one long token);
+        # in that case keep the hard 70-char cut rather than the whole slice.
+        if [[ "$TRIMMED" != "$SLICE" ]]; then
+          SUGGESTED_TITLE="${TRIMMED}…"
+        else
+          SUGGESTED_TITLE="${SLICE}…"
+        fi
+      fi
+      SUGGESTED_TITLE=$(echo "$SUGGESTED_TITLE" | sed -E 's/[[:space:]]*[.,;:]+$//')
+
+      # Meeting display: parse "YYYY-MM-DD-slug" -> "slug (YYYY-MM-DD)".
+      M_DATE="${M:0:10}"
+      M_NAME="${M:11}"
+      MEETING_LABEL="$M_NAME ($M_DATE)"
+
+      # Suggested description: full body + provenance footer (meeting name + date).
+      SUGGESTED_DESC="$BODY"$'\n\n'"From meeting: $MEETING_LABEL"
+
+      # All four fields are pre-filled and editable in place.
+      TITLE=$(prompt_edit_line "Title" "$SUGGESTED_TITLE")
+      echo "Opening description in ${EDITOR:-nano} — save & exit to continue."
+      DESC=$(prompt_edit_multiline "$SUGGESTED_DESC")
+      DUE=$(prompt_edit_line "Due (natural lang or YYYY-MM-DD; empty = none)" "")
+      PRIO=$(prompt_edit_line "Priority (p1=highest, p4=lowest)" "p3")
+
+      # td task add with description; --due is optional.
+      TD_CMD=(td task add "$TITLE" --project "Work" --priority "$PRIO" --description "$DESC")
       if [[ -n "$DUE" ]]; then TD_CMD+=(--due "$DUE"); fi
 
       while true; do
@@ -451,6 +533,11 @@ echo "Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
 | Both `--days` and `--since` passed | Bail with `Use either --days or --since, not both.` |
 | No new items in window | Print `Nothing new in the window across N meeting(s).` Still update `last_run` and exit clean. |
 | User quits with `q` mid-loop | Flush state to disk, update `last_run`, print summary, exit 0. Per-item decisions made before `q` are already persisted (streaming writes). |
+| Bash < 4 (e.g. macOS `/bin/bash` 3.2) | `prompt_edit_line` falls back to `Label [default]:` style — empty reply keeps the default. No in-place editing, but the flow still works. Run the skill under Homebrew bash (`/opt/homebrew/bin/bash` or `/usr/local/bin/bash`) for inline edit. |
+| `$EDITOR` unset | `prompt_edit_multiline` defaults to `nano`. If `nano` isn't installed either, the editor invocation fails — set `EDITOR=vi` (or any installed editor) and re-run that item. |
+| `$EDITOR` is a GUI editor without a wait flag (`code`, `subl`, etc.) | The editor process forks and returns immediately; the skill reads the tempfile before the user saves, so the description silently reverts to the suggested default. Set `EDITOR='code --wait'`, `EDITOR='subl -w'`, etc. before running. |
+| `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_multiline` prints `mktemp failed; falling back to suggested description.` to stderr and returns the suggested default unedited. Free space or fix `/tmp` perms and re-run that item if you need to edit. |
+| User saves an empty description in the editor | Treated as "no edit"; the suggested description is restored. To deliberately clear the description, set it to a single space. |
 
 ## Examples
 
@@ -469,9 +556,15 @@ Found 7 new action items across 2 meetings.
   [t] make todo   [d] dismiss   [s] skip   [q] quit
 > t
 
-Todoist task content [Write up remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work]: Write up remaining IDP epics
-Due (e.g. "tomorrow", "fri", "2026-05-15", or blank for no date): fri
-Priority [p3] (p1=highest, p4=lowest): p2
+Title: Write up remaining IDP epics▮            ← pre-filled with suggested title; user edits in place
+Opening description in nano — save & exit to continue.
+  (editor opens with:
+     Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
+
+     From meeting: platform-standup (2026-05-11)
+   — user edits, saves, exits)
+Due (natural lang or YYYY-MM-DD; empty = none): fri▮
+Priority (p1=highest, p4=lowest): p2▮
 
 ✓ Created — https://app.todoist.com/app/task/write-up-remaining-idp-epics-8Jx4mVr72kPn3QwB
 
