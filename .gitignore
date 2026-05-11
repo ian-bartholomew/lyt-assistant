@@ -37,3 +37,6 @@ test-vault/
 
 # Obsidian
 .obsidian/
+
+# Git worktrees (per user convention)
+.worktrees/

@@ -81,10 +81,10 @@ Compare the `title` frontmatter field to the first `# H1` heading in the body.
 
 Scan for `## H2` headings in the body (after frontmatter).
 
-- Must have a section named "Overview" (or "Summary" or "Introduction"): **error** if missing
+- Must have a section named "Overview" (or "Summary", "Introduction", or "Executive Summary"): **error** if missing
 - Minimum H2 section count (with content) varies by depth:
 
-| Depth | Minimum H2 sections (besides Overview) |
+| Depth | Minimum H2 sections (besides lead section) |
 |-------|----------------------------------------|
 | `brief` | 1 |
 | `standard` or unset | 2 |

@@ -1,18 +1,20 @@
 ---
 name: research
 description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile. Includes automated structure review and fact-checking before finalizing.
-version: 0.5.0
+version: 0.6.0
 argument-hint: [--depth brief|standard|deep] <topic>
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch, Skill, Agent, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
 
 # Research Skill
 
-Research topics using web search or Context7, validate the output for structural quality and factual accuracy, and create standalone source documents in `raw/docs/`. These files are picked up by `/compile` and brought into the wiki.
+Research topics using web search or Context7, validate the output for structural quality and factual accuracy, and create standalone source documents in `raw/docs/` formatted as **white papers**. These files are picked up by `/compile` and brought into the wiki.
 
 ## Purpose
 
-Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into a structured document with source attribution and compilation hints, validates the document through automated structure review and fact-checking, and drops it into `raw/docs/` for the ingest pipeline.
+Accelerate learning by automating research for new topics. Gathers information from authoritative sources, synthesizes into a **white-paper-style document** — Executive Summary, Introduction, Background, Analysis, Conclusion, References — with numbered footnote-style citations and compilation hints. Validates the document through automated structure review and fact-checking, then drops it into `raw/docs/` for the ingest pipeline.
+
+White paper format applies at **every** depth level. Depth controls *length and source count*, not structure: a `brief` is a one-page white paper; `deep` is a full-length one. The reader always sees the same skeleton.
 
 ## When to Use
 
@@ -37,13 +39,13 @@ This follows the vault's three-layer architecture: `raw/` (source) → `wiki/` (
 
 The `--depth` flag controls how exhaustive the research is:
 
-| Level | Sources | Word Target | Content Scope |
-|-------|---------|-------------|---------------|
-| `brief` | 1-2 | 200-300 | Definition, key points, one example |
-| `standard` (default) | 2-3 | 300-500 | Overview, key concepts, examples, use cases |
-| `deep` | 5+ | 1000-2000 | History, theory, multiple examples, counterarguments, edge cases, comparisons |
+| Level | Sources | Word Target | Analysis sub-sections | Conclusion length |
+|-------|---------|-------------|------------------------|-------------------|
+| `brief` | 1-2 | 250-400 | 1 (mechanics) | 1 paragraph |
+| `standard` (default) | 2-3 | 500-800 | 2-3 (mechanics, examples, use cases) | 1-2 paragraphs |
+| `deep` | 5+ | 1200-2200 | 4-6 (mechanics, theory, examples, comparisons, limitations, edge cases) | 2-3 paragraphs |
 
-**Deep research** fetches more sources, explores the topic from multiple angles, and produces a document suitable for thorough study. It also adjusts the structure review minimum word count accordingly.
+All depths share the same six H2 sections (Executive Summary, Introduction, Background, Analysis, Conclusion, References). Only section *length* and the number of *Analysis sub-sections* vary. **Deep research** fetches more sources, explores the topic from multiple angles, and produces a document suitable for thorough study. It also adjusts the structure review minimum word count accordingly.
 
 Usage:
 
@@ -224,29 +226,25 @@ Create structured document from gathered information:
 
 #### 4a. Extract Key Information
 
-What to extract varies by depth:
+Organize what you extract around the white-paper sections so synthesis maps cleanly onto the template.
 
-**Brief:**
+**For every depth, extract material that feeds each section:**
 
-- Definition and key points
-- One practical example
+- **Executive Summary** — the top-line takeaway: what the topic *is*, why it matters, and the one thing the reader should remember.
+- **Introduction** — the problem or question this topic addresses, plus scope (what's in and out).
+- **Background** — prior art, history, originating people/papers, terminology a reader needs before the analysis.
+- **Analysis** — mechanics and behavior. The bulk of the document. Sub-sections scale with depth (see below).
+- **Conclusion** — synthesis: practical implications, when to reach for this, what the analysis means.
 
-**Standard:**
+**Analysis sub-sections by depth:**
 
-- Definition, key concepts, terminology
-- Formula/syntax if applicable
-- Practical examples
-- Use cases
-- Related topics
+| Depth | Sub-sections to extract |
+|-------|--------------------------|
+| `brief` | Mechanics only (definition, formula/syntax if any, one example) |
+| `standard` | Mechanics, examples, use cases |
+| `deep` | Mechanics, theory/foundations, multiple worked examples, comparisons to related concepts, limitations & criticisms, edge cases & common misconceptions |
 
-**Deep** — all of the above, plus:
-
-- **History/origin:** When and why the concept emerged
-- **Theory/foundations:** Underlying principles, mathematical basis
-- **Detailed examples:** Multiple worked examples, real-world case studies
-- **Counterarguments/limitations:** When it doesn't apply, known criticisms
-- **Comparisons:** How it relates to or differs from similar concepts
-- **Edge cases:** Non-obvious behaviors, common misconceptions
+For **deep** research, treat each Analysis sub-section as a mini-essay: extract enough material that each one carries 200-400 words on its own.
 
 #### 4b. Determine Compilation Hints
 
@@ -282,85 +280,77 @@ suggested_related:
 ---
 ```
 
-**Section templates by depth:**
+**White paper template (all depths):**
 
-**Brief:**
-
-```markdown
-# [Topic Title]
-
-## Overview
-
-[Definition and key points — 2-3 paragraphs]
-
-## Example
-
-[One practical example]
-```
-
-**Standard:**
+Every research document uses the same six H2 sections. Length and the number of Analysis sub-sections scale with depth — section *names* do not.
 
 ```markdown
 # [Topic Title]
 
-## Overview
+## Executive Summary
 
-[Brief definition and context]
+[3-5 sentence abstract. State what the paper covers, why it matters, and the
+top takeaway. A skim-reader should be able to stop here and walk away with
+the core idea.]
 
-## Key Concepts
+## Introduction
 
-[Main ideas explained]
+[Frame the problem or question this paper addresses. State scope explicitly
+(what's in, what's out). 1-2 paragraphs. End with what the reader will get
+from the rest of the document.]
 
-## Formula/Syntax
+## Background
 
-[If applicable]
+[Prior art, history, terminology. Set the stage so the Analysis section
+lands. Cite origins and key contributors with inline numbered markers [1].
+Length scales with depth — one paragraph for brief, several for deep.]
 
-## Examples
+## Analysis
 
-[Practical examples]
+[Core body of the paper. Break into numbered sub-headings for distinct
+threads. Every factual claim carries an inline numbered citation [N].]
 
-## Use Cases
+### 1. Mechanics
 
-[When and how to apply]
+[How the topic works — definition, formula/syntax, behavior. Always present.]
+
+### 2. Examples
+
+[Worked examples and real-world cases. Standard and deep.]
+
+### 3. Use Cases
+
+[When and how to apply. Standard and deep.]
+
+### 4. Comparisons
+
+[Relation to similar concepts; what makes this different. Deep only.]
+
+### 5. Limitations
+
+[Known criticisms, edge cases, common misconceptions, when it does not
+apply. Deep only.]
+
+## Conclusion
+
+[Synthesize the analysis. Practical implications. When should a reader
+reach for this? 1-3 paragraphs by depth.]
+
+## References
+
+1. <Source title or publisher> — <URL>
+2. <Source title or publisher> — <URL>
 ```
 
-**Deep:**
+**Sub-section selection by depth:**
 
-```markdown
-# [Topic Title]
+| Depth | Analysis sub-sections to include |
+|-------|----------------------------------|
+| `brief` | 1. Mechanics only |
+| `standard` | 1. Mechanics, 2. Examples, 3. Use Cases |
+| `deep` | All five sub-sections (Mechanics, Examples, Use Cases, Comparisons, Limitations) plus any topic-specific threads (e.g. Theory, Edge Cases) |
 
-## Overview
-
-[Comprehensive definition and context]
-
-## History
-
-[Origin, key contributors, evolution of the concept]
-
-## Theory
-
-[Underlying principles, mathematical foundations, formal definitions]
-
-## Key Concepts
-
-[Detailed explanation of each concept]
-
-## Examples
-
-[Multiple worked examples, real-world case studies]
-
-## Comparisons
-
-[How this relates to or differs from similar concepts]
-
-## Limitations
-
-[When it doesn't apply, known criticisms, common misconceptions]
-
-## Use Cases
-
-[When and how to apply, with concrete scenarios]
-```
+Drop sub-sections that don't apply rather than padding with empty content. Empty sections fail the structure review.
 
 #### 4d. Generate Kebab-Case Filename
 
@@ -381,6 +371,34 @@ Search wiki for related content:
 grep -rl "performance\|capacity\|queueing" wiki/ --include="*.md"
 ```
 
+#### 4f. Citation Style
+
+The white paper format uses **numbered footnote-style citations**. The body carries inline `[N]` markers; the `## References` section at the bottom lists each source with title and URL, numbered to match.
+
+**Rules:**
+
+- Every factual claim (definitions, formulas, dates, attributed positions, statistics) carries an inline `[N]` marker at the end of the sentence.
+- Numbers are assigned in order of first appearance. Reuse the same number on subsequent references to the same source.
+- A claim drawn from multiple sources stacks markers: `[1][3]`.
+- Opinions, examples you constructed, and obvious common knowledge do not need citations.
+- The `## References` section is the human-readable rendering. The `sources:` frontmatter field still contains the bare URL list (machine-readable, used by the fact-checker and `/compile`).
+
+**Worked mini-example:**
+
+```markdown
+## Background
+
+Little's Law was first proven by John Little in 1961 [1]. The law states that
+the long-term average number of customers in a stationary system equals the
+long-term average arrival rate multiplied by the average time a customer
+spends in the system [1][2].
+
+## References
+
+1. Little, J. D. C. — "A Proof for the Queuing Formula: L = λW" (1961) — https://www.jstor.org/stable/167570
+2. Wikipedia — "Little's law" — https://en.wikipedia.org/wiki/Little%27s_law
+```
+
 ### Step 5: Present Summary for Review
 
 Show preview before writing:
@@ -393,10 +411,16 @@ Depth: standard
 Strategy: Web search
 Sources: 3 (Wikipedia, ACM, Google SRE)
 
+Format: white paper
+Sections: Executive Summary, Introduction, Background,
+          Analysis (Mechanics, Examples, Use Cases),
+          Conclusion, References
+Word count target: 500-800
+
 Content Preview:
-Little's Law relates queue length, arrival rate, and wait time...
-[Formula: L = lambda * W]
-[Use cases: capacity planning, performance analysis...]
+Executive Summary: Little's Law relates queue length, arrival rate, and
+wait time (L = λW) and is the foundational identity behind capacity planning
+and performance analysis in queueing systems...
 
 Draft: raw/docs/.draft-littles-law.md
 
@@ -423,16 +447,17 @@ DRAFT_PATH="raw/docs/.draft-${KEBAB_TOPIC}.md"
 
 Use **Write** tool to create the file at `raw/docs/.draft-<kebab-case-topic>.md`.
 
-Example draft content:
+Example draft content (standard depth):
 
 ```markdown
 ---
 title: Little's Law
 source_type: research
+depth: standard
 date: 2026-05-01
 sources:
   - "https://en.wikipedia.org/wiki/Little%27s_law"
-  - "https://dl.acm.org/doi/10.1145/..."
+  - "https://www.jstor.org/stable/167570"
   - "https://sre.google/workbook/..."
 suggested_domain: [sre, performance, capacity-planning]
 suggested_destination: concepts
@@ -443,15 +468,57 @@ suggested_related:
 
 # Little's Law
 
-## Overview
+## Executive Summary
 
-Little's Law relates queue length, arrival rate, and wait time in queueing theory.
-Formulated by John Little in 1961, it's fundamental for capacity planning and
-performance analysis in distributed systems.
+Little's Law states that the long-term average number of items in a stationary
+queueing system equals the average arrival rate multiplied by the average time
+each item spends in the system: L = λW [1]. It is the foundational identity
+behind capacity planning and queue-based performance analysis, and applies to
+any stable system regardless of its internal scheduling discipline [2].
 
-## Formula
+## Introduction
 
-...
+Capacity planning and latency analysis in distributed systems repeatedly hit
+the same question: how do throughput, concurrency, and response time relate?
+This paper introduces Little's Law, the simple identity that ties those three
+quantities together, and explains where it applies and where it breaks down.
+
+## Background
+
+Little's Law was first proven by John Little in 1961 [1]. Prior work in
+queueing theory had observed the relationship empirically; Little's
+contribution was a proof that held independently of arrival-time
+distributions or service disciplines [1].
+
+## Analysis
+
+### 1. Mechanics
+
+L = λ × W, where L is average concurrency in the system, λ is average
+arrival rate, and W is average time spent in the system [1][2]...
+
+### 2. Examples
+
+Worked example: an API handles 100 RPS with a 50ms average response time,
+so average in-flight requests = 100 × 0.05 = 5 [3]...
+
+### 3. Use Cases
+
+Capacity planning: pick a thread-pool size that matches your expected
+arrival rate and target latency [3]...
+
+## Conclusion
+
+Little's Law gives operators a back-of-the-envelope tool that holds under
+remarkably weak assumptions. Reach for it whenever two of the three
+quantities are known and the third is the unknown — but verify the system
+is in steady state before trusting the result.
+
+## References
+
+1. Little, J. D. C. — "A Proof for the Queuing Formula: L = λW" (1961) — https://www.jstor.org/stable/167570
+2. Wikipedia — "Little's law" — https://en.wikipedia.org/wiki/Little%27s_law
+3. Google SRE Workbook — "Non-abstract Large System Design" — https://sre.google/workbook/...
 ```
 
 ### Step 7: Validate & Review
@@ -600,10 +667,9 @@ Research Complete!
 Created: raw/docs/littles-law.md
 
 Content:
-- 342 words
-- 3 sources cited
-- Formula included
-- 2 examples provided
+- 612 words (standard depth)
+- White paper format: 6 sections, 3 Analysis sub-sections
+- 3 sources cited (inline + References)
 
 Review:
 - Structure: PASS
@@ -620,7 +686,8 @@ Research Complete!
 Created: raw/docs/littles-law.md (with warnings)
 
 Content:
-- 342 words
+- 612 words (standard depth)
+- White paper format: 6 sections, 3 Analysis sub-sections
 - 3 sources cited
 
 Review:
@@ -826,7 +893,11 @@ Researching "Little's Law" (standard depth)...
 
 Web search strategy
 Found 3 authoritative sources
-Synthesized 342 words
+Synthesized 612 words in white paper format
+
+Sections: Executive Summary, Introduction, Background,
+          Analysis (Mechanics, Examples, Use Cases),
+          Conclusion, References
 
 Create? [Y]
 
@@ -849,8 +920,11 @@ User: /research --depth brief retry backoff
 
 Researching "retry backoff" (brief)...
 
-Found 1 authoritative source
-Synthesized 240 words
+Found 2 authoritative sources
+Synthesized 320 words in white paper format
+
+Sections: Executive Summary, Introduction, Background,
+          Analysis (Mechanics), Conclusion, References
 
 Create? [Y]
 
@@ -872,11 +946,12 @@ User: /research --depth deep Little's Law
 Researching "Little's Law" (deep)...
 
 Searching: definition, history, comparisons, criticisms...
-Found 6 authoritative sources (Wikipedia, ACM, MIT OCW, Google SRE, ...)
-Synthesized 1,450 words
+Found 6 authoritative sources (Wikipedia, JSTOR, MIT OCW, Google SRE, ...)
+Synthesized 1,820 words in white paper format
 
-Sections: Overview, History, Theory, Key Concepts, Examples (3),
-          Comparisons (vs Amdahl's Law), Limitations, Use Cases
+Sections: Executive Summary, Introduction, Background,
+          Analysis (Mechanics, Theory, Examples, Comparisons,
+                    Limitations), Conclusion, References (6)
 
 Create? [Y]
 
@@ -894,7 +969,7 @@ A) Auto-fix and re-review
 
 [User selects A]
 
-Fixed: added steady-state caveat
+Fixed: added steady-state caveat to Limitations sub-section
 Re-running fact checker...
   Facts: PASS (12 claims verified)
 
@@ -920,4 +995,4 @@ Found 5 authoritative sources...
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7), synthesizing structured documents with proper frontmatter (title, source_type, depth, date, sources, suggested_domain, suggested_destination, suggested_related), and writing them as drafts to `raw/docs/`. The `--depth` flag controls research exhaustiveness: `brief` (200-300 words, 1-2 sources), `standard` (300-500 words, 2-3 sources, default), or `deep` (1000-2000 words, 5+ sources with history, comparisons, and limitations). Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality with depth-aware thresholds, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7) and synthesizing **white-paper-style documents** into `raw/docs/`. Every output uses the same six H2 sections — Executive Summary, Introduction, Background, Analysis, Conclusion, References — with numbered footnote-style inline citations (`[1]`, `[2]`) anchored in the References list. Frontmatter (title, source_type, depth, date, sources, suggested_domain, suggested_destination, suggested_related) supports the downstream `/compile` pipeline. The `--depth` flag controls *length and analysis breadth*, not structure: `brief` (250-400 words, 1-2 sources, one Analysis sub-section), `standard` (500-800 words, 2-3 sources, three Analysis sub-sections, default), or `deep` (1200-2200 words, 5+ sources, five-plus Analysis sub-sections covering theory, comparisons, and limitations). Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality with depth-aware thresholds, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.
