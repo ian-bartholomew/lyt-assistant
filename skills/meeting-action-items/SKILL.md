@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "### Action Items" sections, and walks the user through each one interactively (make todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.2.0
+version: 0.3.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep]
 ---
@@ -387,18 +387,32 @@ echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s).
 
 ### Step 8 — Interactive loop
 
+> **EXECUTOR REQUIREMENT — read this before touching the loop.**
+>
+> Run the bash code in this step verbatim. Do **not** substitute any tool-based picker UI (`AskUserQuestion`, structured choice prompts, multi-select menus, etc.) for any prompt in this loop — not the action choice, not the four sub-fields. Tool pickers hide the suggested title and description and short-circuit the readline / `$EDITOR` editing flow, which defeats the entire point of this skill. The user must see the suggested title and description in the action prompt **and** get an editable pre-filled prompt for every field.
+>
+> The bash `read` / `prompt_edit_line` / `prompt_edit_multiline` flow is required in all cases. **There is no condition under which a tool-based picker is acceptable here** — not when you think it'd be clearer, not when you have only one item, not ever. If you cannot run interactive bash (e.g. you have no TTY), stop and tell the user; do not fall back to a picker.
+
 Iterate the parallel arrays from Step 7 **one item at a time**. For each item print a prompt block and wait for the user's response before moving to the next. Never batch multiple items into a single prompt, never auto-decide, and never assume a default action — every undecided item gets its own round-trip with the user.
+
+The action prompt shows the raw bullet **plus** the suggested title and description that `t` would pre-fill, so the user can see what they'd be editing before they commit to "make todo":
 
 ```
 [2 of 7]  2026-05-11-platform-standup
 
   - [ ] **Ian:** Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
-  [t] make todo   [d] dismiss   [s] skip   [q] quit
+  Suggested title:        Write up the remaining IDP plan (3 of 4 epics) as a one-pager…
+  Suggested description:
+    Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
+
+    From meeting: platform-standup (2026-05-11)
+
+  [t] make todo (edit fields)   [d] dismiss   [s] skip   [q] quit
 > _
 ```
 
-When the user picks `t`, prompt for four fields in order. Each field is presented **pre-filled with a suggested value that the user can edit in place** — they're never asked to retype from scratch.
+When the user picks `t`, prompt for four fields in order. Each field is presented **pre-filled with a suggested value that the user can edit in place** — they're never asked to retype from scratch, and they always get a chance to edit before the Todoist task is created.
 
 1. **Title** — a brief, action-oriented one-liner (the Todoist task content). Suggested value is derived from the action item: strip the bullet marker, checkbox, and any `**Person:**` prefix, then truncate to ~70 chars on a word boundary. Edited inline via `prompt_edit_line` (readline pre-fill).
 2. **Description** — the full action item body, followed by a `From meeting: <slug> (<YYYY-MM-DD>)` footer parsed from the meeting directory name. Edited in `$EDITOR` (default `nvim`) via `prompt_edit_multiline` so the user can revise the multi-line body comfortably.
@@ -409,6 +423,7 @@ Notes for the executor:
 
 - Read a single response token for the top-level action choice — typically a one-character reply (`t`, `d`, `s`, `q`). Accept the first non-whitespace char and treat anything else as invalid (re-prompt this item).
 - For the four sub-fields, use `prompt_edit_line` / `prompt_edit_multiline` from Step 3a. **Do not** ask "blank = accept default" — the pre-fill IS the default; the user edits or accepts.
+- The suggested title and description must be computed **before** the action prompt is displayed so they can be shown in it. Compute them once and reuse the same values when `t` is picked.
 - State writes are streamed inside each branch — a quit (`q`) or crash preserves everything decided so far.
 
 ```bash
@@ -419,8 +434,44 @@ for i in "${!ITEM_KEYS[@]}"; do
   raw="${ITEM_RAWS[$i]}"
   IDX=$((i + 1))
 
-  printf '\n[%d of %d]  %s\n\n  %s\n\n  [t] make todo   [d] dismiss   [s] skip   [q] quit\n> ' \
-    "$IDX" "$TOTAL" "$M" "$raw"
+  # --- Compute suggestions BEFORE the action prompt so they can be shown. ---
+
+  # Body: bullet with checkbox + **Person:** / Person: prefix stripped.
+  BODY=$(echo "$raw" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//; s/^\*\*[^*]+\*\*[[:space:]]+//; s/^[A-Za-z][A-Za-z0-9 ,/+&-]*:[[:space:]]+//')
+
+  # Suggested brief title: truncate BODY to ~70 chars on a word boundary when
+  # possible, falling back to a hard mid-word cut. Append an ellipsis when
+  # truncated, then strip trailing punctuation.
+  if [[ ${#BODY} -le 70 ]]; then
+    SUGGESTED_TITLE="$BODY"
+  else
+    SLICE="${BODY:0:70}"
+    TRIMMED="${SLICE% *}"
+    # `% *` is a no-op when the slice contains no space (one long token);
+    # in that case keep the hard 70-char cut rather than the whole slice.
+    if [[ "$TRIMMED" != "$SLICE" ]]; then
+      SUGGESTED_TITLE="${TRIMMED}…"
+    else
+      SUGGESTED_TITLE="${SLICE}…"
+    fi
+  fi
+  SUGGESTED_TITLE=$(echo "$SUGGESTED_TITLE" | sed -E 's/[[:space:]]*[.,;:]+$//')
+
+  # Meeting display: parse "YYYY-MM-DD-slug" -> "slug (YYYY-MM-DD)".
+  M_DATE="${M:0:10}"
+  M_NAME="${M:11}"
+  MEETING_LABEL="$M_NAME ($M_DATE)"
+
+  # Suggested description: full body + provenance footer (meeting name + date).
+  SUGGESTED_DESC="$BODY"$'\n\n'"From meeting: $MEETING_LABEL"
+
+  # Indent each line of the suggested description by 4 spaces for the prompt block.
+  SUGGESTED_DESC_INDENTED="    ${SUGGESTED_DESC//$'\n'/$'\n'    }"
+
+  # --- Action prompt: shows raw bullet + the two suggestions side-by-side. ---
+
+  printf '\n[%d of %d]  %s\n\n  %s\n\n  Suggested title:        %s\n  Suggested description:\n%s\n\n  [t] make todo (edit fields)   [d] dismiss   [s] skip   [q] quit\n> ' \
+    "$IDX" "$TOTAL" "$M" "$raw" "$SUGGESTED_TITLE" "$SUGGESTED_DESC_INDENTED"
   read -r CHOICE
   CHOICE="${CHOICE:0:1}"
 
@@ -432,35 +483,6 @@ for i in "${!ITEM_KEYS[@]}"; do
       (( N_DISMISSED++ ))
       ;;
     t)
-      # Body: bullet with checkbox + **Person:** / Person: prefix stripped.
-      BODY=$(echo "$raw" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//; s/^\*\*[^*]+\*\*[[:space:]]+//; s/^[A-Za-z][A-Za-z0-9 ,/+&-]*:[[:space:]]+//')
-
-      # Suggested brief title: truncate BODY to ~70 chars on a word boundary
-      # when possible, falling back to a hard mid-word cut. Append an ellipsis
-      # when truncated, then strip trailing punctuation.
-      if [[ ${#BODY} -le 70 ]]; then
-        SUGGESTED_TITLE="$BODY"
-      else
-        SLICE="${BODY:0:70}"
-        TRIMMED="${SLICE% *}"
-        # `% *` is a no-op when the slice contains no space (one long token);
-        # in that case keep the hard 70-char cut rather than the whole slice.
-        if [[ "$TRIMMED" != "$SLICE" ]]; then
-          SUGGESTED_TITLE="${TRIMMED}…"
-        else
-          SUGGESTED_TITLE="${SLICE}…"
-        fi
-      fi
-      SUGGESTED_TITLE=$(echo "$SUGGESTED_TITLE" | sed -E 's/[[:space:]]*[.,;:]+$//')
-
-      # Meeting display: parse "YYYY-MM-DD-slug" -> "slug (YYYY-MM-DD)".
-      M_DATE="${M:0:10}"
-      M_NAME="${M:11}"
-      MEETING_LABEL="$M_NAME ($M_DATE)"
-
-      # Suggested description: full body + provenance footer (meeting name + date).
-      SUGGESTED_DESC="$BODY"$'\n\n'"From meeting: $MEETING_LABEL"
-
       # All four fields are pre-filled and editable in place.
       TITLE=$(prompt_edit_line "Title" "$SUGGESTED_TITLE")
       echo "Opening description in ${EDITOR:-nvim} — save & exit to continue."
@@ -538,6 +560,7 @@ echo "Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
 | `$EDITOR` is a GUI editor without a wait flag (`code`, `subl`, etc.) | The editor process forks and returns immediately; the skill reads the tempfile before the user saves, so the description silently reverts to the suggested default. Set `EDITOR='code --wait'`, `EDITOR='subl -w'`, etc. before running. |
 | `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_multiline` prints `mktemp failed; falling back to suggested description.` to stderr and returns the suggested default unedited. Free space or fix `/tmp` perms and re-run that item if you need to edit. |
 | User saves an empty description in the editor | Treated as "no edit"; the suggested description is restored. To deliberately clear the description, set it to a single space. |
+| Executor substitutes a tool-based picker (`AskUserQuestion`, structured choice) for the action prompt | Wrong — the user loses the suggested title/description preview and the editing flow. Step 8's executor-requirement callout forbids this. If you can't run interactive bash with a TTY, stop and tell the user; do not fall back to a picker. |
 
 ## Examples
 
@@ -553,7 +576,13 @@ Found 7 new action items across 2 meetings.
 
   - [ ] **Ian:** Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
-  [t] make todo   [d] dismiss   [s] skip   [q] quit
+  Suggested title:        Write up the remaining IDP plan (3 of 4 epics) as a one-pager…
+  Suggested description:
+    Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
+
+    From meeting: platform-standup (2026-05-11)
+
+  [t] make todo (edit fields)   [d] dismiss   [s] skip   [q] quit
 > t
 
 Title: Write up remaining IDP epics▮            ← pre-filled with suggested title; user edits in place
@@ -590,7 +619,13 @@ Already-decided items are filtered out before the prompt. A `--days 7` override 
 
   - [ ] **Kareem:** Lead shadowing sessions for service onboarding ...
 
-  [t] make todo   [d] dismiss   [s] skip   [q] quit
+  Suggested title:        Lead shadowing sessions for service onboarding
+  Suggested description:
+    Lead shadowing sessions for service onboarding ...
+
+    From meeting: standup (2026-04-28)
+
+  [t] make todo (edit fields)   [d] dismiss   [s] skip   [q] quit
 > q
 
 Made 2 todos, dismissed 0, skipped 0.
