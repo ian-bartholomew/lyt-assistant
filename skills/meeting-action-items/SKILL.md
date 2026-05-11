@@ -251,7 +251,7 @@ prompt_edit_line() {
   printf '%s' "$var"
 }
 
-# Editor-backed multi-line prompt. Opens $EDITOR (default: nano) on a tempfile
+# Editor-backed multi-line prompt. Opens $EDITOR (default: nvim) on a tempfile
 # pre-filled with $default; returns whatever the user saved. If the user wipes
 # the file to empty, restores $default (treated as "no edit" rather than a
 # deliberate blank — keep this behavior unless you have a reason to allow
@@ -269,7 +269,7 @@ prompt_edit_multiline() {
     return
   fi
   printf '%s' "$default" > "$tmp"
-  "${EDITOR:-nano}" "$tmp" </dev/tty >/dev/tty 2>&1
+  "${EDITOR:-nvim}" "$tmp" </dev/tty >/dev/tty 2>&1
   result=$(cat "$tmp")
   rm -f "$tmp"
   [[ -z "$result" ]] && result="$default"
@@ -401,7 +401,7 @@ Iterate the parallel arrays from Step 7 **one item at a time**. For each item pr
 When the user picks `t`, prompt for four fields in order. Each field is presented **pre-filled with a suggested value that the user can edit in place** — they're never asked to retype from scratch.
 
 1. **Title** — a brief, action-oriented one-liner (the Todoist task content). Suggested value is derived from the action item: strip the bullet marker, checkbox, and any `**Person:**` prefix, then truncate to ~70 chars on a word boundary. Edited inline via `prompt_edit_line` (readline pre-fill).
-2. **Description** — the full action item body, followed by a `From meeting: <slug> (<YYYY-MM-DD>)` footer parsed from the meeting directory name. Edited in `$EDITOR` (default `nano`) via `prompt_edit_multiline` so the user can revise the multi-line body comfortably.
+2. **Description** — the full action item body, followed by a `From meeting: <slug> (<YYYY-MM-DD>)` footer parsed from the meeting directory name. Edited in `$EDITOR` (default `nvim`) via `prompt_edit_multiline` so the user can revise the multi-line body comfortably.
 3. **Due** — natural-language or `YYYY-MM-DD`. Inline-editable; default is blank (no due date).
 4. **Priority** — `p1`–`p4`. Inline-editable; default is `p3`.
 
@@ -463,7 +463,7 @@ for i in "${!ITEM_KEYS[@]}"; do
 
       # All four fields are pre-filled and editable in place.
       TITLE=$(prompt_edit_line "Title" "$SUGGESTED_TITLE")
-      echo "Opening description in ${EDITOR:-nano} — save & exit to continue."
+      echo "Opening description in ${EDITOR:-nvim} — save & exit to continue."
       DESC=$(prompt_edit_multiline "$SUGGESTED_DESC")
       DUE=$(prompt_edit_line "Due (natural lang or YYYY-MM-DD; empty = none)" "")
       PRIO=$(prompt_edit_line "Priority (p1=highest, p4=lowest)" "p3")
@@ -534,7 +534,7 @@ echo "Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
 | No new items in window | Print `Nothing new in the window across N meeting(s).` Still update `last_run` and exit clean. |
 | User quits with `q` mid-loop | Flush state to disk, update `last_run`, print summary, exit 0. Per-item decisions made before `q` are already persisted (streaming writes). |
 | Bash < 4 (e.g. macOS `/bin/bash` 3.2) | `prompt_edit_line` falls back to `Label [default]:` style — empty reply keeps the default. No in-place editing, but the flow still works. Run the skill under Homebrew bash (`/opt/homebrew/bin/bash` or `/usr/local/bin/bash`) for inline edit. |
-| `$EDITOR` unset | `prompt_edit_multiline` defaults to `nano`. If `nano` isn't installed either, the editor invocation fails — set `EDITOR=vi` (or any installed editor) and re-run that item. |
+| `$EDITOR` unset | `prompt_edit_multiline` defaults to `nvim`. If `nvim` isn't installed either, the editor invocation fails — set `EDITOR=vi` (or any installed editor) and re-run that item. |
 | `$EDITOR` is a GUI editor without a wait flag (`code`, `subl`, etc.) | The editor process forks and returns immediately; the skill reads the tempfile before the user saves, so the description silently reverts to the suggested default. Set `EDITOR='code --wait'`, `EDITOR='subl -w'`, etc. before running. |
 | `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_multiline` prints `mktemp failed; falling back to suggested description.` to stderr and returns the suggested default unedited. Free space or fix `/tmp` perms and re-run that item if you need to edit. |
 | User saves an empty description in the editor | Treated as "no edit"; the suggested description is restored. To deliberately clear the description, set it to a single space. |
@@ -557,7 +557,7 @@ Found 7 new action items across 2 meetings.
 > t
 
 Title: Write up remaining IDP epics▮            ← pre-filled with suggested title; user edits in place
-Opening description in nano — save & exit to continue.
+Opening description in nvim — save & exit to continue.
   (editor opens with:
      Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
