@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "### Action Items" sections, and walks the user through each one interactively (make todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.5.0
+version: 0.6.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep]
 ---
@@ -525,6 +525,111 @@ fi
 echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s)$FILTERED_NOTE."
 ```
 
+### Step 7.5 — Bulk triage
+
+Before entering the per-item loop, list every pending item with a 1-based number and accept a single bulk-triage command. The user can dispatch dismissals and skips in one shot, leaving only the genuinely interesting items for the one-by-one prompt in Step 8.
+
+> **EXECUTOR — read this.** The bulk command is **natural-language input** (e.g. `"dismiss 1-4, todo 5-7 and skip 8"`). Parsing it is your job: read what the user typed, map it to three 1-based index lists (`DISMISS_IDX`, `SKIP_IDX`, `TODO_IDX`), **show the plan back to the user**, and require an explicit y/N confirmation via bash `read` before applying anything. If the user declines or types nothing, fall through to Step 8 with every item still in the queue. **Do not** substitute `AskUserQuestion` or any structured picker for the bulk command, the plan display, or the confirmation — the user types the command in free-form prose and confirms with a single character.
+
+Print the list and prompt:
+
+```bash
+TOTAL=${#ITEM_KEYS[@]}
+
+echo
+echo "Pending action items ($TOTAL):"
+for i in "${!ITEM_KEYS[@]}"; do
+  IDX=$((i + 1))
+  M="${ITEM_DIRS[$i]}"
+  raw="${ITEM_RAWS[$i]}"
+  printf '\n  [%d] %s\n      %s\n' "$IDX" "$M" "$raw"
+done
+
+cat <<'PROMPT'
+
+Bulk triage. Say what to do with which items — for example:
+  • dismiss 1-4, todo 5-7, skip 8
+  • todo all
+  • dismiss 1, 3, 5; skip the rest
+  • <blank> to prompt every item interactively
+
+Bulk command:
+PROMPT
+read -r BULK_RAW
+```
+
+Parse semantics:
+
+- **dismiss** / **dismissed** / **reject** → indices go into `DISMISS_IDX`. Recorded immediately as `dismissed` in state (won't re-appear next run).
+- **skip** / **defer** → indices go into `SKIP_IDX`. No state write — they'll re-appear next run.
+- **todo** / **todos** / **add** / **task** / **keep** → indices go into `TODO_IDX`. Each one will go through Step 8's one-by-one prompt (with full edit-all editor).
+- **Indices not mentioned** in the bulk command default to `TODO_IDX` — interactive prompt is the safe default.
+- **Keywords**: `all` = every index. `rest` / `the rest` / `everything else` / `the others` = every index not explicitly named anywhere in the command. **`rest` is resolved against the complete set of explicit assignments first**, then the left-to-right override rule below is applied to the explicit assignments. So `todo rest, dismiss 2` parses as: explicit `dismiss 2` → `rest = all except 2`, which all become todos; final state has 2 dismissed and everyone else as todos. Ranges (`5-7`) and lists (`1, 3, 5`) are supported anywhere indices are named.
+- **Out-of-bounds indices** (e.g. `todo 99` when N=18): drop them from the plan and tell the user which numbers you ignored when echoing the plan back.
+- **Overlaps among explicit assignments**: later assignments in the same command override earlier ones — so `todo 1-5, dismiss 3` dismisses 3 and keeps 1, 2, 4, 5 as todos. The override rule does **not** apply to `rest`; `rest` always wins for indices it covers, because by definition `rest` only covers indices not explicitly named.
+
+Apply the plan:
+
+```bash
+# Empty bulk command → straight to Step 8 with the full queue.
+if [[ -z "$BULK_RAW" ]]; then
+  echo "No bulk command — prompting each of the $TOTAL items interactively."
+else
+  # Executor populates DISMISS_IDX, SKIP_IDX, TODO_IDX from BULK_RAW.
+  # Then echo the plan and ask for y/N.
+  # Use an explicit length check for the "(none)" fallback — `${arr[*]:-...}`
+  # does NOT trigger on an empty array in bash 3.2 (the parameter is non-null,
+  # just empty, so `:-` won't fire).
+  [[ ${#DISMISS_IDX[@]} -eq 0 ]] && _D="(none)" || _D="${DISMISS_IDX[*]}"
+  [[ ${#SKIP_IDX[@]}    -eq 0 ]] && _S="(none)" || _S="${SKIP_IDX[*]}"
+  [[ ${#TODO_IDX[@]}    -eq 0 ]] && _T="(none)" || _T="${TODO_IDX[*]}"
+
+  echo
+  echo "Proposed bulk triage:"
+  printf '  Dismiss (%d): %s\n' "${#DISMISS_IDX[@]}" "$_D"
+  printf '  Skip    (%d): %s\n' "${#SKIP_IDX[@]}" "$_S"
+  printf '  Todo    (%d): %s — interactive prompt\n' "${#TODO_IDX[@]}" "$_T"
+  printf '\nApply this? [y/N] '
+  read -r CONFIRM
+  case "${CONFIRM:0:1}" in
+    y|Y)
+      for idx in "${DISMISS_IDX[@]}"; do
+        i=$((idx - 1))
+        record_state "${ITEM_KEYS[$i]}" "${ITEM_DIRS[$i]}" "${ITEM_RAWS[$i]}" "dismissed" "null"
+        (( N_DISMISSED++ ))
+      done
+      for idx in "${SKIP_IDX[@]}"; do
+        (( N_SKIPPED++ ))
+      done
+      # Rebuild parallel arrays to contain only TODO_IDX items, in original order.
+      NEW_KEYS=(); NEW_DIRS=(); NEW_RAWS=()
+      for idx in "${TODO_IDX[@]}"; do
+        i=$((idx - 1))
+        NEW_KEYS+=("${ITEM_KEYS[$i]}")
+        NEW_DIRS+=("${ITEM_DIRS[$i]}")
+        NEW_RAWS+=("${ITEM_RAWS[$i]}")
+      done
+      ITEM_KEYS=("${NEW_KEYS[@]}")
+      ITEM_DIRS=("${NEW_DIRS[@]}")
+      ITEM_RAWS=("${NEW_RAWS[@]}")
+      echo "Applied. ${#ITEM_KEYS[@]} item(s) remain for interactive prompting."
+      ;;
+    *)
+      echo "Bulk triage cancelled. Falling through to one-by-one prompts for all $TOTAL items."
+      ;;
+  esac
+fi
+
+# If bulk cleared the queue entirely, jump straight to the finalize summary.
+if [[ ${#ITEM_KEYS[@]} -eq 0 ]]; then
+  update_last_run
+  SUMMARY="Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
+  if (( N_FILTERED > 0 )); then SUMMARY="$SUMMARY Filtered $N_FILTERED items by assignee."; fi
+  echo "$SUMMARY"
+  exit 0
+fi
+```
+
 ### Step 8 — Interactive loop
 
 > **EXECUTOR REQUIREMENT — read this before touching the loop.**
@@ -533,7 +638,7 @@ echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s)$
 >
 > The bash `read` / `prompt_edit_all` flow is required in all cases. **There is no condition under which a tool-based picker is acceptable here** — not when you think it'd be clearer, not when you have only one item, not ever. If you cannot run interactive bash (e.g. you have no TTY), stop and tell the user; do not fall back to a picker.
 
-Iterate the parallel arrays from Step 7 **one item at a time**. For each item print a prompt block and wait for the user's response before moving to the next. Never batch multiple items into a single prompt, never auto-decide, and never assume a default action — every undecided item gets its own round-trip with the user.
+Iterate the parallel arrays — which Step 7.5 may have shrunk to the user's chosen `TODO_IDX` subset — **one item at a time**. For each item print a prompt block and wait for the user's response before moving to the next. Never batch multiple items into a single prompt, never auto-decide, and never assume a default action — every undecided item gets its own round-trip with the user.
 
 The action prompt shows the raw bullet **plus** the suggested title and description that `t` would pre-fill, so the user can see what they'd be editing before they commit to "make todo":
 
@@ -724,6 +829,11 @@ echo "$SUMMARY"
 | Joint assignee like `**Ian / Matt:**` or `**Team / Peter+Rafael:**` | Included if **any** split-part is in `$ASSIGNEE_ALLOW`. Split happens on `/`, `,`, `+`, `&`. |
 | Bullet prefix is `**Equity Comp team:**` or `**Marketing Team:**` | Excluded — exact-match against `$ASSIGNEE_ALLOW` (not substring), so `"team"` alone in the allowlist doesn't pull in `"equity comp team"`. Add the specific name to the allowlist to override. |
 | Update `$ASSIGNEE_ALLOW` to add a new alias | Edit the array in Step 3a directly. No state migration needed — previously-filtered items will resurface on the next run because filter decisions aren't persisted. |
+| Empty bulk-triage command | Skip the bulk step entirely; every pending item goes to Step 8 for one-by-one prompting. |
+| Bulk command references an out-of-range index (e.g. `dismiss 99` when N=18) | Drop the out-of-range numbers from the plan and note them when echoing the plan back. Confirm only the in-range indices. |
+| Bulk command has overlapping ranges (e.g. `todo 1-5, dismiss 3`) | Later assignments in the same command override earlier ones — `3` dismisses; `1, 2, 4, 5` stay as todos. |
+| User declines the bulk-triage y/N confirmation | Fall through to Step 8 with the full queue intact (no items dismissed or skipped). User can still pick `q` mid-loop. |
+| Bulk command marks every item as dismiss or skip (TODO queue empties) | Apply the dismissals, update `last_run`, print the summary, and exit cleanly. Step 8 is never entered. |
 
 ## Examples
 
@@ -735,7 +845,46 @@ User: /lyt-assistant:meeting-action-items
 Window: 2026-05-09 -> 2026-05-11 (inclusive)
 Found 7 new action items across 2 meetings.
 
-[1 of 7]  2026-05-11-platform-standup
+Pending action items (7):
+
+  [1] 2026-05-11-platform-standup
+      - [ ] **Ian:** Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
+
+  [2] 2026-05-11-platform-standup
+      - [ ] **Team:** Take inventory of anything that needs reverting post-offsite.
+
+  [3] 2026-05-11-platform-standup
+      - [ ] **Team:** Backtrack untracked offsite work and capture as tickets.
+
+  [4] 2026-05-11-platform-standup
+      - [ ] **Team / Peter+Rafael:** Scope true ARM runner support.
+
+  [5] 2026-05-11-platform-standup
+      - [ ] **Team:** Investigate CICD prod cluster modernization.
+
+  [6] 2026-05-11-platform-standup
+      - [ ] **Team:** Engineering Book Club resumes tomorrow 11am Eastern.
+
+  [7] 2026-05-11-equity-program-update
+      - [ ] **All recipients:** Log into ShareWorks once you receive the acceptance email.
+
+Bulk triage. Say what to do with which items — for example:
+  • dismiss 1-4, todo 5-7, skip 8
+  • todo all
+  • dismiss 1, 3, 5; skip the rest
+  • <blank> to prompt every item interactively
+
+Bulk command: dismiss 2-3, 6; todo 1, 4-5, 7
+
+Proposed bulk triage:
+  Dismiss (3): 2 3 6
+  Skip    (0): (none)
+  Todo    (4): 1 4 5 7 — interactive prompt
+
+Apply this? [y/N] y
+Applied. 4 item(s) remain for interactive prompting.
+
+[1 of 4]  2026-05-11-platform-standup
 
   - [ ] **Ian:** Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
@@ -767,9 +916,11 @@ Opening task fields in nvim — save & exit to continue.
 
 ✓ Created — https://app.todoist.com/app/task/write-up-remaining-idp-epics-8Jx4mVr72kPn3QwB
 
-[2 of 7]  2026-05-11-platform-standup
+[2 of 4]  2026-05-11-platform-standup
 ...
 ```
+
+The numbering inside Step 8's loop is the *post-bulk* index — items 2/3/6 were dismissed in bulk and don't appear in the interactive prompt; only items 1/4/5/7 reach Step 8, where they're shown as 1 of 4, 2 of 4, etc.
 
 ### Example 2 — Second run, items deduped
 
