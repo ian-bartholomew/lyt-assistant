@@ -1,7 +1,7 @@
 ---
 name: one-pager
-description: This skill should be used when the user asks to "write a one-pager", "draft a one-pager", "make a one-pager", or "create a TechOps one-pager". Drafts a persuasion-focused one-page proposal in raw/one-pagers/, runs three parallel agent personas (TPM, Lead Platform Engineer, Engineering Manager) for feedback, iterates with the user until approved, then publishes as a draft child of the TechOps 1-Pagers page in Confluence (parent 1164869728, FAN space) and gates the final publish on user confirmation.
-version: 0.1.0
+description: This skill should be used when the user asks to "write a one-pager", "draft a one-pager", "make a one-pager", or "create a TechOps one-pager". Drafts a persuasion-focused one-page proposal in raw/one-pagers/ following the TechOps 1 Pager Template (Confluence page 1898676290, FAN space) — header table (Published / Authors / Jira Tickets / Status) and sections What / Why / Other Considerations / Additional Reading. Runs three parallel agent personas (TPM, Lead Platform Engineer, Engineering Manager) for feedback, iterates with the user until approved, then publishes as a draft child of the TechOps 1-Pagers page in Confluence (parent 1164869728, FAN space) and gates the final publish on user confirmation.
+version: 0.2.0
 argument-hint: "[topic or short pitch]"
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion, Agent, mcp__plugin_fbg-core_atlassian__getAccessibleAtlassianResources, mcp__plugin_fbg-core_atlassian__getConfluencePage, mcp__plugin_fbg-core_atlassian__createConfluencePage, mcp__plugin_fbg-core_atlassian__updateConfluencePage]
 ---
@@ -20,20 +20,33 @@ Invoke this skill when:
 
 ## Format Reference
 
-The one-pager format is the canonical persuasion artifact documented in the user's wiki at `~/Documents/Work/wiki/concepts/one-pager-and-rfc.md`:
+The canonical section structure is the **TechOps 1 Pager Template** in Confluence (page id `1898676290`, FAN space). This skill mirrors that template exactly so drafts publish cleanly under the same parent and read consistently with sibling one-pagers.
+
+Persuasion principles come from the user's wiki at `~/Documents/Work/wiki/concepts/one-pager-and-rfc.md`:
 
 - **Audience:** anyone who decides whether the thing happens (managers, VPs, peer leads). Usually *not* engineers who'd build it.
-- **Goal:** agreement on the *problem* and the *direction*, not on the design.
+- **Goal:** agreement on the *outcome* and the *why*, not on the design.
 - **Length:** the wiki says only *"One page. Anything longer is no longer a one-pager"* and flags *"one-pager that's actually three pages"* as the top anti-pattern. This skill operationalizes that with a soft target of 400–600 words and a hard trim above 700 — those numbers are this skill's calibration, not wiki-quoted.
 - **Style:** persuasive, not exhaustive. Skip implementation details — they invite premature objections about *how* before *whether*.
 
+Header metadata (template table at the top of every page):
+
+| Field | Notes |
+|-------|-------|
+| **Published** | Date the page goes live (or current date for drafts). |
+| **Authors** | One or more author names. |
+| **Jira Tickets** | Optional related tickets. |
+| **Status** | One of `Draft`, `Defining`, `Building`, `Completed`. |
+
 Required sections (every one-pager):
 
-1. **Problem** — in stakeholder-relevant terms
-2. **Why Now** — the forcing function
-3. **Proposed Direction** — a paragraph, not a design
-4. **Expected Impact** — what gets better, what gets harder
-5. **The Ask** — the single decision the audience must make, *and* what's needed to commit to next steps (this skill's heading is an editorial alias for the wiki's "What you'd need to commit to next steps" — the heading is crisper, the content the wiki describes still belongs here)
+1. **What** *(required)* — the outcome you hope to accomplish. Describe the *outcome*, not the technical approach. Avoid prescriptive tool selection.
+2. **Why** *(required)* — why this needs to be considered and prioritized. Not the same as "what".
+
+Optional sections (include when they add signal):
+
+1. **Other Considerations** *(optional)* — security, compliance, developer experience, operational load, anything else that should be weighed.
+2. **Additional Reading** *(optional)* — context links (RFCs, dashboards, prior one-pagers, vendor docs).
 
 ## Paths
 
@@ -59,11 +72,12 @@ Then collect the remaining inputs via plain conversational prompts (one at a tim
 | Field | Prompt |
 |-------|--------|
 | Audience | Who decides whether this happens? (e.g. "VP Eng + peer team leads") |
-| Problem | One sentence: what's broken or missing today? |
-| Why now | What's the forcing function — why can't this wait? |
-| Proposed direction | A paragraph (not a design). What would we do, at the level of intent? |
-| Expected impact | What gets better? What gets harder? Be honest about the trade. |
-| The ask | The single decision the audience must make. Crisp and concrete. |
+| Authors | Author name(s) for the header table (defaults to `Ian Bartholomew` if blank). |
+| Jira tickets | Optional. Related tickets (comma-separated keys, e.g. `FANDEVX-2444, FESFEAT-428`). Leave blank to omit. |
+| What | One paragraph: the *outcome* you hope to accomplish. Describe the outcome, not the technical approach. Avoid prescribing tools. |
+| Why | One paragraph: why this needs to be considered and prioritized. Not the same as "what". |
+| Other considerations | Optional. Security, compliance, developer experience, operational load, edge cases. Leave blank to omit. |
+| Additional reading | Optional. Context links (RFCs, dashboards, prior one-pagers, vendor docs). Leave blank to omit. |
 
 If the user gives a very short answer for any field, accept it — the persona reviewers in Step 4 will flag thinness.
 
@@ -92,16 +106,18 @@ If either `$DRAFT_PATH` or `$FINAL_PATH` already exists, ask via `AskUserQuestio
 
 ### Step 3 — Write the draft
 
-Write `$DRAFT_PATH` with this template:
+Write `$DRAFT_PATH` with this template. The header table mirrors the canonical TechOps 1 Pager Template (Confluence page `1898676290`) so the published page reads identically to its siblings. Omit any optional section the user left blank — do not include a heading with placeholder filler.
 
 ```markdown
 ---
 title: <Title>
 audience: <Audience>
-author: Ian Bartholomew
+authors: <Authors>
 date: <YYYY-MM-DD>
 status: draft
+jira_tickets: <comma-separated keys or empty>
 confluence_parent_id: "1164869728"
+confluence_template_id: "1898676290"
 confluence_space: FAN
 confluence_page_id: null
 confluence_url: null
@@ -109,26 +125,30 @@ confluence_url: null
 
 # <Title>
 
-## Problem
+| **Published** | <YYYY-MM-DD> |
+| --- | --- |
+| **Authors** | <Authors> |
+| **Jira Tickets** | <ticket keys or `—`> |
+| **Status** | Draft |
 
-<One-paragraph problem framing in stakeholder-relevant terms.>
+## What
 
-## Why Now
+<One paragraph describing the *outcome* you hope to accomplish. Do not go deep on technical approach; do not prescribe tools.>
 
-<The forcing function — why this can't wait.>
+## Why
 
-## Proposed Direction
+<One paragraph explaining why this needs to be considered and prioritized. Different from "what".>
 
-<A paragraph (not a design). What we'd do, at the level of intent.>
+## Other Considerations
 
-## Expected Impact
+<Optional. Security, compliance, developer experience, operational load, edge cases.>
 
-<What gets better. What gets harder. Be honest about the trade.>
+## Additional Reading
 
-## The Ask
-
-<The single decision the audience must make. Crisp and concrete.>
+<Optional. Context links (RFCs, dashboards, prior one-pagers, vendor docs).>
 ```
+
+**Status field semantics.** The header `Status` row tracks the *lifecycle* of the proposal in Confluence (`Draft` → `Defining` → `Building` → `Completed`), per the TechOps template's enum. Drafts always start at `Draft`. The frontmatter `status` field tracks the *local file* lifecycle (`draft` → `published`) and is set automatically by this skill — do not conflate the two.
 
 **Length guard.** After writing, count words in the body (everything below the closing `---` of frontmatter):
 
@@ -175,12 +195,13 @@ Keep your response under 250 words. Do not write the one-pager yourself — only
 
 ```
 You are a Technical Project Manager reviewing a one-pager at <DRAFT_PATH>.
+The page follows the TechOps 1 Pager Template: a header table (Published / Authors / Jira Tickets / Status), then **What**, **Why**, optionally **Other Considerations** and **Additional Reading**.
 
 Your concerns:
-- Is the scope clear and bounded?
-- Are dependencies and cross-team coordination addressed?
-- Is the timeline (if implied) realistic?
-- Is "The Ask" actionable — would a stakeholder know exactly what they're agreeing to?
+- Is **What** a clear, bounded outcome — or does it drift into prescribing technical approach/tools (template explicitly bars this)?
+- Does **Why** make the prioritization case, or does it just restate **What**?
+- Are cross-team dependencies, sequencing, and timeline implications surfaced (in Why or Other Considerations)?
+- Is the Jira Tickets cell populated where applicable? Is Status appropriate (Draft for new proposals)?
 
 Read the file, then return the response format described below.
 
@@ -191,12 +212,13 @@ Read the file, then return the response format described below.
 
 ```
 You are a Lead Platform Engineer reviewing a one-pager at <DRAFT_PATH>.
+The page follows the TechOps 1 Pager Template: a header table (Published / Authors / Jira Tickets / Status), then **What**, **Why**, optionally **Other Considerations** and **Additional Reading**.
 
 Your concerns:
-- Is the proposed direction technically feasible?
-- Is there hidden complexity the audience won't see (migration paths, operational load, edge cases)?
-- What second-order effects on the platform are missing from "Expected Impact"?
-- Does the framing risk misleading non-engineers about the real cost?
+- Is the outcome in **What** technically feasible without leaking into design? (Template explicitly discourages tool/approach prescription here.)
+- Is **Why** honest about the cost — or does it oversell the upside?
+- Are second-order effects (migration paths, operational load, security/compliance/DX, edge cases) captured in **Other Considerations**? If that section is missing entirely, is its absence justified?
+- Does the framing risk misleading non-engineers about real implementation cost?
 
 Read the file, then return the response format described below.
 
@@ -207,12 +229,13 @@ Read the file, then return the response format described below.
 
 ```
 You are an Engineering Manager reviewing a one-pager at <DRAFT_PATH>.
+The page follows the TechOps 1 Pager Template: a header table (Published / Authors / Jira Tickets / Status), then **What**, **Why**, optionally **Other Considerations** and **Additional Reading**.
 
 Your concerns:
-- Does the team have capacity? What gets displaced?
-- Is the impact worth the prioritization cost?
-- Will stakeholders actually buy in, or is the framing off for the audience?
-- Are staffing or hiring assumptions implicit?
+- Does **Why** answer "why prioritize this now over what we're already doing"? Capacity/displacement implicit?
+- Is the outcome in **What** worth the prioritization cost it implies?
+- Will the named audience actually buy in, or is the framing off for them?
+- Are staffing or hiring assumptions hidden inside **Why** or **Other Considerations**?
 
 Read the file, then return the response format described below.
 
@@ -235,10 +258,10 @@ Reviewer round 1:
   Engineering Manager: approve
 
   Merged edits applied:
-    - Problem: tightened to one sentence (TPM, EM)
-    - Why Now: added Q3 deadline citation (TPM)
-    - Expected Impact: added "ops oncall load increases" (Lead PE)
-    - The Ask: rephrased to a yes/no decision (TPM, EM)
+    - What: stripped "by deploying Karpenter v0.34" — too prescriptive (TPM, Lead PE)
+    - Why: added Q3 cost-review forcing function (TPM, EM)
+    - Other Considerations: added "node-replacement churn during pilot" (Lead PE)
+    - Header: added FANDEVX-2448 to Jira Tickets row (TPM)
 
   Word count: 487
 ```
@@ -305,7 +328,8 @@ Once the user approves at Step 6:
    - `spaceKey: "FAN"` (or `spaceId` from the lookup above)
    - `parentId: "1164869728"`
    - `title`: the one-pager title from frontmatter
-   - `body`: the markdown body (everything below the frontmatter's closing `---`). If the tool requires Confluence storage format, convert basic markdown headings/paragraphs/bullets to storage format inline — there are no images, tables, or macros in the template.
+   - `body`: the markdown body (everything below the frontmatter's closing `---`). The template includes a header metadata table (Published / Authors / Jira Tickets / Status) — markdown tables render natively in Confluence, no conversion needed. There are no images or macros to preserve on a fresh create.
+   - `contentFormat: "markdown"`
    - `status: "draft"` only if the schema accepted it in step 2.
 
 5. **Persist Confluence identity** — update the draft's frontmatter via `Edit`:
@@ -370,11 +394,12 @@ One-pager published.
 User: /lyt-assistant:one-pager adopt Karpenter org-wide
 
 What's the audience? VP Eng + EKS team leads
-Problem (one sentence)? Cluster auto-scaler is leaving 20–30% capacity unused at peak and we hit pod-pending events 3x/week.
-Why now? Q3 cost review flagged a $180k overrun; FinOps wants a credible plan by end of month.
-Proposed direction? <paragraph>
-Expected impact? <paragraph>
-The ask? Approve a 2-engineer, 6-week pilot in the staging EKS clusters, with go/no-go on prod migration after.
+Authors? Ian Bartholomew
+Jira tickets? FANDEVX-2448
+What (outcome)? Reduce EKS capacity waste and pod-pending events across the org by migrating from cluster-autoscaler to a workload-aware node provisioner. (No tool prescription in this section.)
+Why? Q3 cost review flagged a $180k overrun in unused EKS capacity; FinOps wants a credible plan by end of month, and the pod-pending events are causing visible latency in identity flows.
+Other considerations? Node-replacement churn during cutover; security review needed for any new IAM roles.
+Additional reading? RFC-104 (cluster autoscaling alternatives), Q3 FinOps memo.
 
 Wrote draft: ~/Documents/Work/raw/one-pagers/.draft-adopt-karpenter-org-wide.md (512 words)
 
@@ -386,8 +411,8 @@ Reviewer round 1:
   Engineering Manager: approve
 
 Merged edits applied:
-  - Expected Impact: added "node-replacement churn during pilot" (Lead PE)
-  - Proposed Direction: clarified scope is EKS-only, not Fargate (Lead PE)
+  - What: removed "by deploying Karpenter" — too prescriptive, drifted into approach (Lead PE)
+  - Other Considerations: added "audit-log volume increase during pilot" (Lead PE)
 
 Word count: 528
 
@@ -415,7 +440,7 @@ One-pager published.
 [round 1 reviewers + edits as above]
 
 [Approve / Revise / Cancel] > Revise
-What would you like changed? Tighten Problem to one sentence; the second sentence is RFC material.
+What would you like changed? Tighten What to one paragraph; the second paragraph is starting to read like a design.
 
 Applied edit. Re-dispatching 3 reviewers...
 
