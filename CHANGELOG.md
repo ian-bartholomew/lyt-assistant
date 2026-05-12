@@ -5,11 +5,19 @@ All notable changes to the LYT Assistant plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-05-12
+
+### Changed
+
+- `/meeting-action-items` now runs as part of `/end-of-day` (new Step 5, after the meeting-ingest join), instead of as Step 1 of `/start-of-day`. Action items from each day's meetings are reviewed while the meetings are still fresh, rather than the following morning.
+- `/start-of-day` is now a single-step routine (today + overdue, with edit loop). Its skill version bumps to `0.2.0` and `Skill` is removed from `allowed-tools`.
+
 ## [0.1.0] - 2026-03-27
 
 ### Added
 
 #### Core Skills
+
 - **`/classify-inbox`** - Interactive inbox file classifier with intelligent destination suggestions
 - **`/create-note`** - Guided note creation with proper LYT structure
 - **`/discover-links`** - Automatic link discovery grouped by theme
@@ -17,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/research <topic>`** - Topic research with web search and Context7 integration
 
 #### Shared Utilities
+
 - `vault-scanner.md` - Vault traversal and indexing operations
 - `link-parser.md` - Obsidian wiki-link extraction and manipulation
 - `frontmatter.md` - YAML frontmatter operations
@@ -24,12 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `moc-matcher.md` - MOC relevance matching
 
 #### Documentation
+
 - Complete README with usage examples
 - Comprehensive TESTING.md with 10 test cases
 - Example outputs for classify-inbox and check-moc-health
 - CHANGELOG for version tracking
 
 #### Features
+
 - Interactive workflow with AskUserQuestion integration
 - Content analysis using heuristics for Note vs Reference classification
 - MOC suggestion based on topic matching
@@ -40,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error handling for common edge cases
 
 ### Design Principles
+
 - Progressive disclosure (lean SKILL.md, detailed lib/ utilities)
 - DRY architecture (shared utilities across all skills)
 - Interactive editing before execution
@@ -47,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive error handling
 
 ### Technical Details
+
 - Plugin version: 0.1.0
 - Total files: 16
 - Skills: 5 user-invocable commands
@@ -55,9 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Total documentation: ~15,000 words
 
 ### Author
-- Ian Bartholomew (ian@ianbartholomew.com)
+
+- Ian Bartholomew (<ian@ianbartholomew.com>)
 
 ### Notes
+
 - Initial release
 - Designed for Obsidian vaults using LYT system
 - Requires Claude Code with Read, Write, Edit, Bash, Grep, Glob, WebFetch, AskUserQuestion tools
@@ -68,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned Features
+
 - `/refactor-note` - Convert Reference to Note with guided transformation
 - `/archive-stale` - Automated archival of old content
 - `/sync-backlinks` - Ensure bidirectional linking consistency
@@ -78,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vault health statistics and analytics
 
 ### Potential Improvements
+
 - Performance optimization for large vaults (>500 files)
 - Advanced semantic similarity for link matching
 - Multi-language support for content analysis
