@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "### Action Items" sections, and walks the user through each one interactively (make todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.3.0
+version: 0.4.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep]
 ---
@@ -23,6 +23,18 @@ Invoke this skill when:
 - **Vault root:** invoke from `/Users/ian.bartholomew/Documents/Work/` (the Obsidian vault). All paths in this skill are relative to that root.
 - **Todoist CLI (`td`):** must be installed and authenticated. The skill verifies this in Step 2 and exits with instructions if not.
 - **`jq` and `shasum`:** used for state-file operations and key hashing. Both are present on the user's macOS.
+
+### Assignee filter
+
+The skill only prompts for action items assigned to Ian, the FES platform team, or a broadcast audience (e.g. "All recipients", "Everyone"). Items prefixed with another person's or team's name (e.g. `**Matt:**`, `**Equity Comp team:**`) are skipped silently in Step 7 and counted in the run summary.
+
+The allowlist lives in `$ASSIGNEE_ALLOW` in Step 3a. Matching rules:
+
+- The assignee prefix is split on `/`, `,`, `+`, and `&`. Joint assignees include if **any** one part matches — `**Team / Peter+Rafael:**` includes because `team` is in the allowlist; `**Ian/Matt:**` includes because `ian` is.
+- Each part is compared **case-insensitively and exactly** against the allowlist (after trimming whitespace). No substring matching, so `**Equity Comp team:**` does NOT match the bare `team` entry.
+- Bullets with no assignee prefix at all are **included** (treated as everyone's responsibility — change the helper if you'd rather skip them).
+- Already-checked `- [x]` bullets are auto-recorded as `todoed` regardless of assignee; the filter only gates the interactive prompt path.
+- Filter decisions are **not** persisted to state. Adding a new name to `$ASSIGNEE_ALLOW` will resurface previously-filtered items on the next run.
 
 ## Arguments
 
@@ -146,10 +158,28 @@ fi
 Define all helper functions and initialize the run counters **before** entering the meeting loop. Later steps call these by name.
 
 ```bash
-# Run counters (referenced in Step 8 handlers and Step 9 summary)
+# Run counters (referenced in Step 7/8 handlers and Step 9 summary)
 N_TODOED=0
 N_DISMISSED=0
 N_SKIPPED=0
+N_FILTERED=0   # items skipped by the assignee filter in Step 7
+
+# Allowlist of normalized assignee values that should pass the filter. Each
+# entry is matched case-insensitively after splitting the raw assignee on
+# `/`, `,`, `+`, and `&` and trimming whitespace — any single part matching
+# any entry in this list flips the whole item to "included".
+#
+# To change who counts as "me" or extend the team-level allow set, edit this
+# array directly. Add/remove names rather than tweaking the matching logic.
+ASSIGNEE_ALLOW=(
+  # Self
+  "ian" "ian bartholomew" "ian-bartholomew" "ian b" "ian b." "ian bart" "me"
+  # Broadcast assignees
+  "all" "all recipients" "all hands" "all employees" "everyone"
+  # FES platform team variants
+  "team" "fes" "fes team" "fes platform" "fes platform team"
+  "platform" "platform team" "sre" "sre team"
+)
 
 # Extract Action Items bullets from a summary file
 extract_action_items() {
@@ -183,7 +213,7 @@ normalize() {
   local s="$1"
   s="$(echo "$s" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//')"
   s="$(echo "$s" | sed -E 's/^\*\*[A-Za-z][A-Za-z0-9 ,/+&-]*:\*\*[[:space:]]+//')"
-  s="$(echo "$s" | sed -E 's/^[A-Za-z][A-Za-z0-9 ,/+&-]*:[[:space:]]+//')"
+  s="$(echo "$s" | sed -E 's/^[A-Za-z][A-Za-z0-9 ,/+&.-]*:[[:space:]]+//')"
   s="$(echo "$s" | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//' | tr '[:upper:]' '[:lower:]')"
   printf '%s' "$s"
 }
@@ -194,6 +224,55 @@ key_for() {
   local hash
   hash=$(printf '%s' "$normalized" | shasum -a 256 | cut -c1-12)
   printf '%s::%s' "$meeting_dir" "$hash"
+}
+
+# Extract the assignee prefix from a raw bullet. Returns the name(s) inside
+# `**...**` (preferred) or the bare `Name:` prefix. Strips a trailing colon
+# if the markdown emphasis wraps it (the common `**Ian:**` style). Empty
+# output means the bullet has no assignee prefix.
+extract_assignee() {
+  local raw="$1" body
+  # Strip the leading bullet marker + optional checkbox.
+  body=$(printf '%s' "$raw" | sed -E 's/^[[:space:]]*[-*][[:space:]]+(\[[ xX]\][[:space:]]+)?//')
+  # `[[:space:]]*` (not `+`) so `**Matt:**no-space-after-bold` still parses as
+  # an assignee prefix — otherwise such bullets bypass the filter and look
+  # unassigned. `-` is placed last in the bare-name char class to be safe in
+  # POSIX bracket expressions (no escaping needed there).
+  if [[ "$body" =~ ^\*\*([^*]+)\*\*[[:space:]]* ]]; then
+    # **Ian:** style — capture inside the asterisks, then drop trailing colon.
+    local inner="${BASH_REMATCH[1]}"
+    printf '%s' "${inner%:}"
+  elif [[ "$body" =~ ^([A-Za-z][A-Za-z0-9\ /,+\&.-]*):[[:space:]] ]]; then
+    # Ian: style — capture up to the first colon.
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# Decide whether an assignee is in scope. Returns 0 (include) for:
+#   - empty assignee (no prefix → treat as everyone's item, don't filter)
+#   - any single split-part matching an entry in $ASSIGNEE_ALLOW
+# Returns 1 (skip) otherwise. Splits the raw assignee on `/`, `,`, `+`, and
+# `&` so joint assignees like "Team / Peter+Rafael" or "Ian/Matt" include if
+# *any* one part is allowed. Exact-match on each part (after lowercasing and
+# trimming) — no substring matching, so "Equity Comp team" does NOT match
+# the bare "team" entry.
+should_include_assignee() {
+  local assignee="$1" part allowed
+  [[ -z "$assignee" ]] && return 0
+  # `printf '%s\n'` ensures a trailing newline so `read` consumes the final
+  # part. Without it, single-part inputs like "Ian" would be silently
+  # dropped because they have no line terminator.
+  while IFS= read -r part; do
+    part="${part#"${part%%[![:space:]]*}"}"   # ltrim
+    part="${part%"${part##*[![:space:]]}"}"   # rtrim
+    [[ -z "$part" ]] && continue
+    for allowed in "${ASSIGNEE_ALLOW[@]}"; do
+      if [[ "$part" == "$allowed" ]]; then
+        return 0
+      fi
+    done
+  done < <(printf '%s\n' "$assignee" | tr '[:upper:]' '[:lower:]' | tr '/,+&' '\n')
+  return 1
 }
 
 # ISO 8601 timestamp with strict ":"-separated TZ offset
@@ -342,9 +421,11 @@ fi
 
 Use `normalize` and `key_for` from Step 3a. `normalize` strips the bullet marker, optional checkbox, optional person prefix (`**Person:**` or `Person:`), collapses whitespace, and lowercases. `key_for` produces `<meeting_dir>::<sha256(normalized)[:12]>`. No new code at this step — Step 7 calls them directly.
 
-### Step 7 — Filter against state; auto-handle `- [x]` bullets
+### Step 7 — Filter against state, by assignee; auto-handle `- [x]` bullets
 
 Across **all** meetings discovered in Step 4, build three parallel arrays (`ITEM_KEYS`, `ITEM_DIRS`, `ITEM_RAWS`) of items that need user attention. Parallel arrays (rather than a single delimited string) keep bullet text containing `|`, `:`, or other separators safe.
+
+Items are filtered out at this step if their assignee prefix is not in `$ASSIGNEE_ALLOW` (defined in Step 3a). The filter is intentionally **not** persisted to the state file — if you later add a new name to the allow list, previously-filtered items will resurface on the next run. The trade-off is that filtered items get re-evaluated every run, which is fast (a few string ops per bullet). Already-checked `- [x]` bullets are still auto-recorded as `todoed` regardless of assignee — they're done, no need to filter.
 
 ```bash
 ITEM_KEYS=()
@@ -362,9 +443,17 @@ for raw in "${BULLETS[@]}"; do
     continue
   fi
 
-  # Auto-record [x] bullets as todoed (no prompt, no URL)
+  # Auto-record [x] bullets as todoed (no prompt, no URL) — these are done
+  # regardless of who they were assigned to; record before assignee filtering.
   if [[ "$raw" =~ ^[[:space:]]*[-*][[:space:]]+\[[xX]\] ]]; then
     record_state "$KEY" "$M" "$raw" "todoed" "null"
+    continue
+  fi
+
+  # Assignee filter — skip bullets owned by people not in $ASSIGNEE_ALLOW.
+  ASSIGNEE=$(extract_assignee "$raw")
+  if ! should_include_assignee "$ASSIGNEE"; then
+    (( N_FILTERED++ ))
     continue
   fi
 
@@ -377,12 +466,17 @@ done
 After all meetings are processed, if no items are pending:
 
 ```bash
+FILTERED_NOTE=""
+if (( N_FILTERED > 0 )); then
+  FILTERED_NOTE=" ($N_FILTERED filtered by assignee)"
+fi
+
 if [[ ${#ITEM_KEYS[@]} -eq 0 ]]; then
-  echo "Nothing new in the window across ${#MEETINGS[@]} meeting(s)."
+  echo "Nothing new in the window across ${#MEETINGS[@]} meeting(s)$FILTERED_NOTE."
   update_last_run
   exit 0
 fi
-echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s)."
+echo "Found ${#ITEM_KEYS[@]} new action items across ${#MEETINGS[@]} meeting(s)$FILTERED_NOTE."
 ```
 
 ### Step 8 — Interactive loop
@@ -536,7 +630,11 @@ Update `last_run` (using `update_last_run` from Step 3a) and print the end-of-ru
 
 ```bash
 update_last_run
-echo "Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
+SUMMARY="Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
+if (( N_FILTERED > 0 )); then
+  SUMMARY="$SUMMARY Filtered $N_FILTERED items by assignee."
+fi
+echo "$SUMMARY"
 ```
 
 ## Edge Cases
@@ -561,6 +659,10 @@ echo "Made $N_TODOED todos, dismissed $N_DISMISSED, skipped $N_SKIPPED."
 | `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_multiline` prints `mktemp failed; falling back to suggested description.` to stderr and returns the suggested default unedited. Free space or fix `/tmp` perms and re-run that item if you need to edit. |
 | User saves an empty description in the editor | Treated as "no edit"; the suggested description is restored. To deliberately clear the description, set it to a single space. |
 | Executor substitutes a tool-based picker (`AskUserQuestion`, structured choice) for the action prompt | Wrong — the user loses the suggested title/description preview and the editing flow. Step 8's executor-requirement callout forbids this. If you can't run interactive bash with a TTY, stop and tell the user; do not fall back to a picker. |
+| Action item has no assignee prefix (no `**Name:**` or `Name:`) | Included — treated as everyone's responsibility. Change `should_include_assignee` to `return 1` for empty assignees if you'd rather skip these. |
+| Joint assignee like `**Ian / Matt:**` or `**Team / Peter+Rafael:**` | Included if **any** split-part is in `$ASSIGNEE_ALLOW`. Split happens on `/`, `,`, `+`, `&`. |
+| Bullet prefix is `**Equity Comp team:**` or `**Marketing Team:**` | Excluded — exact-match against `$ASSIGNEE_ALLOW` (not substring), so `"team"` alone in the allowlist doesn't pull in `"equity comp team"`. Add the specific name to the allowlist to override. |
+| Update `$ASSIGNEE_ALLOW` to add a new alias | Edit the array in Step 3a directly. No state migration needed — previously-filtered items will resurface on the next run because filter decisions aren't persisted. |
 
 ## Examples
 
