@@ -157,7 +157,9 @@ Skill: meeting-action-items
 Args: (none)
 ```
 
-The skill handles its own interactive per-item review loop (`[t]` make todo / `[d]` dismiss / `[s]` skip / `[q]` quit) and bulk-triage shortcut. Track for the run: number of items reviewed, number of new todos created, number dismissed, number skipped.
+**Must run interactively in the foreground session.** Invoke via the `Skill` tool in the main conversation — do NOT dispatch via `Agent` (background or foreground) and do NOT instruct it to "run non-interactively" like Step 2. The skill drives a per-item prompt loop that requires the user at the keyboard: `[t]` make todo / `[d]` dismiss / `[s]` skip / `[q]` quit, plus a bulk-triage shortcut. A subagent has no way to surface those prompts to the user, so dispatching it that way would either hang, auto-default every item, or silently dismiss work that should have become a todo.
+
+Track for the run: number of items reviewed, number of new todos created, number dismissed, number skipped.
 
 Record status:
 
