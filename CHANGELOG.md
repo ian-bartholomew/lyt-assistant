@@ -5,6 +5,13 @@ All notable changes to the LYT Assistant plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-05-12
+
+### Removed
+
+- `/start-of-day` moved out of this plugin into user-private skills (`~/.claude/skills/start-of-day/`). It was tied to the user's personal Todoist setup, not the LYT/wiki workflow.
+- `/end-of-day` moved out of this plugin into user-private skills (`~/.claude/skills/end-of-day/`). The sibling skills it orchestrates (`compile`, `meeting-action-items`, `support-learnings`, `internal-channel-learnings`, `meeting-ingest`) remain in this plugin and are now invoked as `lyt-assistant:<name>` from the relocated skill.
+
 ## [2.12.0] - 2026-05-12
 
 ### Changed
