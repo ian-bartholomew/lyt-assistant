@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "### Action Items" sections, and walks the user through each one interactively (make todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.6.0
+version: 0.7.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep]
 ---
@@ -206,6 +206,84 @@ extract_action_items() {
   ' "$file"
 }
 
+# Scan a bullet body for a date phrase and echo it, or echo empty if none.
+# Used in Step 8 to pre-fill the `due:` default. The phrase is passed
+# through to `td task add --due "<phrase>"` verbatim — we rely on Todoist's
+# natural-language parser to resolve the actual date, so anything `td`
+# accepts can be returned here. First match wins; order is "most specific
+# first".
+suggest_due_from_text() {
+  local text="$1" lc
+  lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+
+  # ISO date: 2026-06-01
+  if [[ "$lc" =~ ([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"; return
+  fi
+
+  # EOW / end of week → Friday (Todoist resolves "Friday" to next Friday)
+  if [[ "$lc" =~ (^|[^a-z])(eow|end[[:space:]]of[[:space:]]week)([^a-z]|$) ]]; then
+    printf 'Friday'; return
+  fi
+
+  # EOM / end of month
+  if [[ "$lc" =~ (^|[^a-z])(eom|end[[:space:]]of[[:space:]]month)([^a-z]|$) ]]; then
+    printf 'end of month'; return
+  fi
+
+  # EOD / today / tonight → today
+  if [[ "$lc" =~ (^|[^a-z])(eod|today|tonight)([^a-z]|$) ]]; then
+    printf 'today'; return
+  fi
+
+  # tomorrow
+  if [[ "$lc" =~ (^|[^a-z])tomorrow([^a-z]|$) ]]; then
+    printf 'tomorrow'; return
+  fi
+
+  # next week / this week
+  if [[ "$lc" =~ (^|[^a-z])(next|this)[[:space:]]+week([^a-z]|$) ]]; then
+    printf '%s week' "${BASH_REMATCH[2]}"; return
+  fi
+
+  # weekday (mon..sun), optionally prefixed with "next " or "this "
+  if [[ "$lc" =~ (^|[^a-z])((next|this)[[:space:]]+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)([^a-z]|$) ]]; then
+    local prefix="${BASH_REMATCH[3]}" day="${BASH_REMATCH[4]}"
+    if [[ -n "$prefix" ]]; then
+      printf '%s %s' "$prefix" "$day"
+    else
+      printf '%s' "$day"
+    fi
+    return
+  fi
+
+  # "in N days/weeks"
+  if [[ "$lc" =~ (^|[^a-z])in[[:space:]]+([0-9]+)[[:space:]]+(day|days|week|weeks)([^a-z]|$) ]]; then
+    printf 'in %s %s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"; return
+  fi
+
+  # Month name + day: "June 1", "Jun 1", "June 1st"
+  if [[ "$lc" =~ (^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[[:space:]]+([0-9]{1,2})(st|nd|rd|th)?([^0-9a-z]|$) ]]; then
+    printf '%s %s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"; return
+  fi
+
+  # M/D or M/D/YY[YY] — require a date-context word ("by", "due",
+  # "before", "on", "deadline") immediately before the digits. Without
+  # this guard, fractions like "completed 3/4 of the backlog" would
+  # silently match and Todoist would interpret "3/4" as March 4. Also
+  # require the month and day to be plausible calendar values so things
+  # like "13/4" or "0/5" don't pass.
+  if [[ "$lc" =~ (by|due|before|on|deadline|ship[a-z]*|deliver[a-z]*)[[:space:]]+([0-9]{1,2})/([0-9]{1,2})(/[0-9]{2,4})?([^0-9/]|$) ]]; then
+    local m="${BASH_REMATCH[2]}" d="${BASH_REMATCH[3]}" y="${BASH_REMATCH[4]}"
+    if (( 10#$m >= 1 && 10#$m <= 12 && 10#$d >= 1 && 10#$d <= 31 )); then
+      printf '%s/%s%s' "$m" "$d" "$y"; return
+    fi
+  fi
+
+  # nothing matched
+  printf ''
+}
+
 # Normalize bullet text for hashing. The Word-colon strip is intentionally
 # greedy and will eat labels like "Action:" or "TODO:" as well as person
 # prefixes — accepted trade-off; keeps keys stable for the common case.
@@ -321,8 +399,8 @@ update_last_run() {
 #     # title/due/priority go above `---`; description is everything below.
 #
 #     title: <suggested>
-#     due:
-#     priority: p3
+#     due: tomorrow
+#     priority: p2
 #     ---
 #     <suggested description, possibly multi-line>
 #
@@ -665,8 +743,8 @@ When the user picks `t`, open all four fields in `$EDITOR` (default `nvim`) at o
 # Lines starting with `#` above the separator are comments and ignored.
 
 title: Write up the remaining IDP plan (3 of 4 epics) as a one-pager…
-due:
-priority: p3
+due: tomorrow
+priority: p2
 ---
 Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
@@ -677,8 +755,8 @@ Field semantics:
 
 1. **Title** — Todoist task content. Suggestion: bullet body with marker, checkbox, and `**Person:**` prefix stripped, truncated to ~70 chars on a word boundary.
 2. **Description** — everything below the `---` separator. Suggestion: full action item body + `From meeting: <slug> (<YYYY-MM-DD>)` footer.
-3. **Due** — natural-language or `YYYY-MM-DD`. Default blank (no due date); `--due` is omitted from `td task add` if the user leaves it empty.
-4. **Priority** — `p1`–`p4`. Default `p3`.
+3. **Due** — natural-language or `YYYY-MM-DD`. Default `tomorrow`, or a date phrase inferred from the bullet body if `suggest_due_from_text` matched one (e.g. "by Friday", "EOW", "2026-06-01", "in 3 days"). `--due` is omitted from `td task add` only if the user explicitly clears the field.
+4. **Priority** — `p1`–`p4`. Default `p2`.
 
 Notes for the executor:
 
@@ -745,9 +823,13 @@ for i in "${!ITEM_KEYS[@]}"; do
       ;;
     t)
       # Open all four fields in $EDITOR at once. prompt_edit_all sets the
-      # globals TITLE / DESC / DUE / PRIO.
+      # globals TITLE / DESC / DUE / PRIO. Default due is the date inferred
+      # from the bullet body (suggest_due_from_text) if it contains one,
+      # otherwise "tomorrow". Default priority is "p2".
+      DETECTED_DUE=$(suggest_due_from_text "$BODY")
+      DEFAULT_DUE="${DETECTED_DUE:-tomorrow}"
       echo "Opening task fields in ${EDITOR:-nvim} — save & exit to continue."
-      prompt_edit_all "$SUGGESTED_TITLE" "$SUGGESTED_DESC" "" "p3"
+      prompt_edit_all "$SUGGESTED_TITLE" "$SUGGESTED_DESC" "$DEFAULT_DUE" "p2"
 
       # td task add with description; --due is optional.
       TD_CMD=(td task add "$TITLE" --project "Work" --priority "$PRIO" --description "$DESC")
@@ -820,7 +902,7 @@ echo "$SUMMARY"
 | User quits with `q` mid-loop | Flush state to disk, update `last_run`, print summary, exit 0. Per-item decisions made before `q` are already persisted (streaming writes). |
 | `$EDITOR` unset | `prompt_edit_all` defaults to `nvim`. If `nvim` isn't installed either, the editor invocation fails — set `EDITOR=vi` (or any installed editor) and re-run that item. |
 | `$EDITOR` is a GUI editor without a wait flag (`code`, `subl`, etc.) | The editor process forks and returns immediately; the skill reads the tempfile before the user saves, so all four fields silently revert to the suggested defaults. Set `EDITOR='code --wait'`, `EDITOR='subl -w'`, etc. before running. |
-| `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_all` prints `mktemp failed; using all suggestions unedited.` to stderr and proceeds with the suggested values (title, description, blank due, p3 priority). Free space or fix `/tmp` perms if you need to edit. |
+| `mktemp` fails (disk full, `/tmp` unwritable) | `prompt_edit_all` prints `mktemp failed; using all suggestions unedited.` to stderr and proceeds with the suggested values (title, description, the computed default due, p2 priority). Free space or fix `/tmp` perms if you need to edit. |
 | User deletes the `---` separator | The parser never enters description mode; the file is treated as key-value lines only. `DESC` stays empty and falls back to the suggested description. Title/due/priority also fall back if their lines were deleted. To deliberately keep the description blank, leave the area below `---` empty rather than removing the separator. |
 | User wipes the file or makes the description whitespace-only | Description falls back to the suggestion (a whitespace-only string is treated as empty so it doesn't leak into `td task add`). To deliberately clear a field, leave its value empty (`title:`, `due:`, etc.) — empty title and priority fall back to the suggestion; empty due means "no due date". |
 | User edits priority to an invalid value (not `p1`–`p4`) | Passed through to `td task add`, which rejects it. The skill falls into the standard `td failed` retry/dismiss/skip prompt. |
@@ -905,8 +987,8 @@ Opening task fields in nvim — save & exit to continue.
      # title/due/priority go above `---`; description is everything below.
 
      title: Write up the remaining IDP plan (3 of 4 epics) as a one-pager…
-     due:
-     priority: p3
+     due: tomorrow
+     priority: p2
      ---
      Write up the remaining IDP plan (3 of 4 epics) as a one-pager / Confluence page so the team can continue the work.
 
