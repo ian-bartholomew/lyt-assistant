@@ -1,7 +1,7 @@
 ---
 name: research
 description: This skill should be used when the user asks to "research a topic", "research [topic]", "look up [topic]", or wants to gather information about a subject. Outputs a standalone doc to raw/docs/ for later compilation into the wiki via /compile. Includes automated structure review and fact-checking before finalizing.
-version: 0.6.0
+version: 0.7.0
 argument-hint: [--depth brief|standard|deep] <topic>
 allowed-tools: [Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch, Skill, Agent, mcp__plugin_context7_context7__query-docs, mcp__plugin_context7_context7__resolve-library-id, AskUserQuestion]
 ---
@@ -45,7 +45,9 @@ The `--depth` flag controls how exhaustive the research is:
 | `standard` (default) | 2-3 | 500-800 | 2-3 (mechanics, examples, use cases) | 1-2 paragraphs |
 | `deep` | 5+ | 1200-2200 | 4-6 (mechanics, theory, examples, comparisons, limitations, edge cases) | 2-3 paragraphs |
 
-All depths share the same six H2 sections (Executive Summary, Introduction, Background, Analysis, Conclusion, References). Only section *length* and the number of *Analysis sub-sections* vary. **Deep research** fetches more sources, explores the topic from multiple angles, and produces a document suitable for thorough study. It also adjusts the structure review minimum word count accordingly.
+All depths share the same six H2 sections (Executive Summary, Introduction, Background, Analysis, Conclusion, References). Only section *length* and the number of *Analysis sub-sections* vary. It also adjusts the structure review minimum word count accordingly.
+
+**Deep depth uses a different engine.** Instead of sequential web searches in one context, `deep` decomposes the topic into 4-6 sub-questions, dispatches one research agent per sub-question **in parallel**, cross-checks every gathered claim across the agents' independent sources, and synthesizes only the claims that survive a consensus vote. Claims that fail cross-checking are dropped. See the **Deep Research Engine** section below and `lib/deep-research.md` for the full procedure. `brief` and `standard` keep the sequential gather + single fact-checker.
 
 Usage:
 
@@ -136,7 +138,15 @@ else
 fi
 ```
 
-**Always confirm with user:**
+**Confirm with user (brief and standard only).** For `deep`, skip this Y/n
+strategy prompt — the Deep Research Engine decides strategy once for the run
+(web search, plus Context7 only for library topics). Deep gets its own approval
+gate inside the engine: it previews the decomposed sub-questions and waits for
+the user's go-ahead BEFORE dispatching agents (so no fan-out tokens are spent if
+the user wants to adjust). This sub-question preview is deep's ONLY user prompt
+before synthesis — do not also show a strategy-confirmation prompt for deep.
+Step 5 then serves as the usual post-synthesis content preview, same as other
+depths.
 
 ```
 Topic: "Little's Law"
@@ -152,26 +162,29 @@ Proceed with web search? [Y/n]
 
 ### Step 3: Gather Information
 
+**Deep depth branches here.** If `DEPTH=deep`, do NOT run the sequential
+strategies below. Instead run the **Deep Research Engine** (its own section
+after Step 4, procedure in `lib/deep-research.md`): decompose into sub-questions,
+fan out parallel research agents, cross-check and vote, then continue to Step 4
+with only the surviving claims. The strategies below (A and B) apply to `brief`
+and `standard` only.
+
 #### Strategy A: Web Search
 
 Use **WebFetch** tool to search and retrieve content:
 
-**Source count by depth:**
+**Source count by depth** (deep uses the Deep Research Engine instead — see below):
 
 | Depth | Sources to fetch | Search queries |
 |-------|-----------------|----------------|
 | `brief` | 1-2 | 1 query: `"<topic> definition"` |
 | `standard` | 2-3 | 2 queries: `"<topic> definition"`, `"<topic> SRE"` |
-| `deep` | 5+ | 3+ queries: definition, SRE, history, comparisons, criticisms |
 
 ```bash
-# Step 1: Construct search queries (varies by depth)
+# Step 1: Construct search queries (brief/standard)
 QUERIES=("${TOPIC} definition")
-if [ "$DEPTH" != "brief" ]; then
+if [ "$DEPTH" = "standard" ]; then
   QUERIES+=("${TOPIC} SRE")
-fi
-if [ "$DEPTH" = "deep" ]; then
-  QUERIES+=("${TOPIC} history" "${TOPIC} vs" "${TOPIC} criticism limitations")
 fi
 
 # Step 2: Search and fetch
@@ -180,8 +193,6 @@ fi
 
 # Step 3: Synthesize key information
 ```
-
-For **deep** research, cast a wider net: look for alternative perspectives, historical context, criticisms, and comparisons to related concepts.
 
 **Example web search flow:**
 
@@ -399,6 +410,46 @@ spends in the system [1][2].
 2. Wikipedia — "Little's law" — https://en.wikipedia.org/wiki/Little%27s_law
 ```
 
+### Deep Research Engine (deep depth only)
+
+When `DEPTH=deep`, this engine REPLACES the Step 3 gather. Full procedure,
+agent prompt template, and voting rules live in `lib/deep-research.md` — read
+it before running. Summary of the four phases:
+
+1. **Decompose** the topic into 4-6 investigative sub-questions (Mechanics,
+   Theory, Examples, Comparisons, Limitations, plus 0-2 topic-specific angles).
+   Then **show the sub-questions to the user and wait for approval before
+   dispatching** — this is deep's pre-flight gate (user may add/drop/reword
+   angles or cancel). Only fan out once approved.
+
+   ```
+   Deep research plan for "exponential backoff and jitter":
+     1. Mechanics — what it is and how the backoff + jitter formula works
+     2. Theory — why jitter reduces contention; originating sources
+     3. Examples — full / equal / decorrelated jitter in practice
+     4. Comparisons — vs fixed/linear backoff, vs token bucket
+     5. Limitations — when jitter hurts, ordering/fairness caveats
+
+   Dispatch 5 parallel research agents on these? [Y / edit / cancel]
+   ```
+
+2. **Fan out in parallel** — dispatch one `Agent` (`general-purpose`) per
+   sub-question, all in a single message (same parallel pattern as the Step 7
+   reviewers). Each agent searches independently with `[WebSearch, WebFetch,
+   Grep]` (+ Context7 for libraries) and returns atomic claims tagged with
+   source URL(s) and a source tier (1/2/3).
+3. **Cross-check & vote** — merge all agents' claims, group ones asserting the
+   same fact, and rule on each: a claim **SURVIVES** if backed by >=2
+   independent sources OR by >=1 Tier-1 source uncontradicted; otherwise it is
+   **DROPPED** (single weak source, or the losing side of a contradiction).
+   Dropped claims are removed silently — not shown in the document.
+4. **Synthesize survivors** — feed only surviving claims into Step 4's white
+   paper, mapping each sub-question's findings onto the deep Analysis
+   sub-sections. Populate `sources:` and `[N]` citations from survivors only.
+
+Report the vote tally in the final summary (counts only): e.g.
+`Cross-check: 23 claims gathered, 18 survived, 5 dropped`.
+
 ### Step 5: Present Summary for Review
 
 Show preview before writing:
@@ -430,6 +481,42 @@ Compilation hints:
   Suggested related: [[capacity-planning-guide]], [[latency-throughput-goodput]]
 
 Would you like to:
+A) Create with these settings (recommended)
+B) Edit content
+C) Show full content preview
+D) Cancel
+```
+
+**Deep variant.** For `deep`, the sub-questions were already approved at the
+pre-flight gate (engine Step A) and the agents have run, so the Step 5 preview
+reports what the cross-check produced rather than asking which strategy to use:
+
+```
+Research Summary (deep):
+
+Topic: exponential backoff and jitter
+Depth: deep
+Sub-questions: 5 (Mechanics, Theory, Examples, Comparisons, Limitations)
+Cross-check: 23 claims gathered, 18 survived, 5 dropped
+Sources: 11 (surviving claims only)
+
+Format: white paper
+Sections: Executive Summary, Introduction, Background,
+          Analysis (Mechanics, Theory, Examples, Comparisons, Limitations),
+          Conclusion, References
+Word count target: 1200-2200
+
+Content Preview:
+Executive Summary: Exponential backoff spaces retries by an exponentially
+growing delay; adding randomized jitter de-synchronizes clients and...
+
+Draft: raw/docs/.draft-exponential-backoff-and-jitter.md
+
+Compilation hints:
+  Suggested destination: guides
+  Suggested domains: [sre, resilience, retries]
+  Suggested related: [[retry-storms]], [[circuit-breaker-pattern]]
+
 A) Create with these settings (recommended)
 B) Edit content
 C) Show full content preview
@@ -523,7 +610,14 @@ is in steady state before trusting the result.
 
 ### Step 7: Validate & Review
 
-Dispatch two reviewers **in parallel** (single message, both tool calls together):
+For `brief` and `standard`, dispatch two reviewers **in parallel** (single
+message, both tool calls together): structure review (7a) and fact checker (7b).
+
+**For `deep`, skip the fact checker (7b).** The Deep Research Engine's
+cross-check vote already verified every surviving claim against multiple
+independent sources, so re-running the standalone fact checker is redundant.
+Run only the structure review (7a) for deep. The structure review runs at
+every depth.
 
 #### 7a. Structure Review (Skill tool)
 
@@ -536,9 +630,10 @@ Args: raw/docs/.draft-littles-law.md
 
 This checks frontmatter completeness, section structure, word count, source attribution, wikilink validity, related articles, and empty sections. Returns a structured report with status (`PASS`, `WARN`, `NEEDS_FIX`).
 
-#### 7b. Fact Checker (Agent tool)
+#### 7b. Fact Checker (Agent tool) — brief and standard only
 
-Dispatch via the **Agent** tool with a focused prompt. The agent runs in isolated context with tools `[Read, WebFetch, WebSearch, Grep]`.
+Skip this for `deep` (see above). For `brief` and `standard`, dispatch via the
+**Agent** tool with a focused prompt. The agent runs in isolated context with tools `[Read, WebFetch, WebSearch, Grep]`.
 
 **Important:** Before dispatching, substitute `<topic>` in the prompt template below with the actual kebab-case filename (e.g., `littles-law`).
 
@@ -593,7 +688,24 @@ Status rules:
 
 ### Step 8: Present Findings
 
-Once both reviewers return, merge their reports into a combined summary:
+**For `deep`** there is no fact-checker, so present the structure result plus
+the cross-check vote tally (counts only — never list dropped claims):
+
+```
+Review Results: raw/docs/.draft-littles-law.md
+
+  Structure: PASS (8/8 checks passed)
+  Cross-check: 23 claims gathered, 18 survived, 5 dropped
+
+  No issues found. Ready to finalize.
+
+  A) Finalize (recommended)
+  B) Show full structure report
+  C) Cancel (delete draft)
+```
+
+**For `brief` and `standard`**, once both reviewers return, merge their reports
+into a combined summary:
 
 ```
 Review Results: raw/docs/.draft-littles-law.md
@@ -637,7 +749,11 @@ If the user selects **"Auto-fix"**:
    - For empty sections: add content or remove the section
 2. Re-run **only the reviewer(s) that reported issues** — don't re-run a reviewer that already passed
 3. Present updated findings
-4. Repeat until both pass or user selects "Accept as-is"
+4. Repeat until all reviewers pass or user selects "Accept as-is"
+
+For `deep` there is only one reviewer (structure review) — there is no
+fact-checker to re-run, so "all reviewers pass" means the structure review
+passes.
 
 If the user selects **"Accept as-is"**:
 
@@ -943,11 +1059,19 @@ Next step: run /compile to bring into wiki
 ```
 User: /research --depth deep Little's Law
 
-Researching "Little's Law" (deep)...
+Researching "Little's Law" (deep — Deep Research Engine)...
 
-Searching: definition, history, comparisons, criticisms...
-Found 6 authoritative sources (Wikipedia, JSTOR, MIT OCW, Google SRE, ...)
-Synthesized 1,820 words in white paper format
+Decomposed into 5 sub-questions:
+  1. Mechanics/definition  2. Theory/foundations  3. Worked examples
+  4. Comparisons (Erlang, utilization law)  5. Limitations/criticisms
+
+Dispatching 5 research agents in parallel...
+  Agent 1-5 returned 23 atomic claims across 11 sources
+
+Cross-checking & voting...
+  18 survived, 5 dropped
+
+Synthesized 1,820 words from surviving claims (white paper format)
 
 Sections: Executive Summary, Introduction, Background,
           Analysis (Mechanics, Theory, Examples, Comparisons,
@@ -957,23 +1081,11 @@ Create? [Y]
 
 Draft written: raw/docs/.draft-littles-law.md
 
-Reviewing...
+Reviewing... (structure only — cross-check already verified claims)
   Structure: PASS (8/8)
-  Facts: NEEDS_FIX (1 unsupported claim)
-
-Issues:
-  1. [fact] Line 58: "Universally applicable to all queueing systems"
-     CONTRADICTED — sources note it requires steady-state assumption
-
-A) Auto-fix and re-review
-
-[User selects A]
-
-Fixed: added steady-state caveat to Limitations sub-section
-Re-running fact checker...
-  Facts: PASS (12 claims verified)
 
 Created: raw/docs/littles-law.md
+Cross-check: 23 claims gathered, 18 survived, 5 dropped
 Next step: run /compile to bring into wiki
 ```
 
@@ -995,4 +1107,4 @@ Found 5 authoritative sources...
 
 ## Summary
 
-The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7) and synthesizing **white-paper-style documents** into `raw/docs/`. Every output uses the same six H2 sections — Executive Summary, Introduction, Background, Analysis, Conclusion, References — with numbered footnote-style inline citations (`[1]`, `[2]`) anchored in the References list. Frontmatter (title, source_type, depth, date, sources, suggested_domain, suggested_destination, suggested_related) supports the downstream `/compile` pipeline. The `--depth` flag controls *length and analysis breadth*, not structure: `brief` (250-400 words, 1-2 sources, one Analysis sub-section), `standard` (500-800 words, 2-3 sources, three Analysis sub-sections, default), or `deep` (1200-2200 words, 5+ sources, five-plus Analysis sub-sections covering theory, comparisons, and limitations). Before finalizing, it runs two automated reviewers in parallel: a structure review skill (`/review-structure`) that validates document quality with depth-aware thresholds, and a fact-checker agent that cross-references claims against sources and independent web searches. Issues are presented to the user with options to auto-fix, accept, or cancel. Once both reviewers pass, the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.
+The research skill automates topic research by fetching information from authoritative sources (via WebFetch or Context7) and synthesizing **white-paper-style documents** into `raw/docs/`. Every output uses the same six H2 sections — Executive Summary, Introduction, Background, Analysis, Conclusion, References — with numbered footnote-style inline citations (`[1]`, `[2]`) anchored in the References list. Frontmatter (title, source_type, depth, date, sources, suggested_domain, suggested_destination, suggested_related) supports the downstream `/compile` pipeline. The `--depth` flag controls *length and analysis breadth*, not structure: `brief` (250-400 words, 1-2 sources, one Analysis sub-section), `standard` (500-800 words, 2-3 sources, three Analysis sub-sections, default), or `deep` (1200-2200 words, five-plus Analysis sub-sections covering theory, comparisons, and limitations). `brief` and `standard` gather sequentially and verify with a single fact-checker agent. `deep` uses the **Deep Research Engine** (`lib/deep-research.md`): it decomposes the topic into 4-6 sub-questions, fans out one research agent per sub-question in parallel, cross-checks every gathered claim across the agents' independent sources, and synthesizes only the claims that survive a consensus vote (failed claims are dropped silently). Before finalizing, every depth runs the structure review skill (`/review-structure`); brief/standard additionally run the fact-checker, while deep skips it because cross-check voting already verified the claims. Issues are presented to the user with options to auto-fix, accept, or cancel, then the draft is finalized to `raw/docs/<topic>.md` for pickup by the `/compile` pipeline.

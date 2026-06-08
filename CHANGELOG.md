@@ -5,6 +5,13 @@ All notable changes to the LYT Assistant plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] - 2026-06-08
+
+### Changed
+
+- `/research --depth deep` now uses a **Deep Research Engine** (`lib/deep-research.md`) modeled on Claude Code's bundled `/deep-research`: it decomposes the topic into 4-6 sub-questions, gates on a sub-question preview, fans out one parallel research agent per sub-question, cross-checks every gathered claim across the agents' independent sources, and synthesizes only the claims that survive a consensus vote. Claims that fail cross-checking are dropped silently (counts reported in the run summary). `brief` and `standard` are unchanged.
+- For `deep`, the standalone fact-checker agent (Step 7b) is skipped — cross-check voting already verifies claims against multiple independent sources. The structure review (7a) still runs at every depth. Research skill version `0.6.0` -> `0.7.0`.
+
 ## [2.13.0] - 2026-05-12
 
 ### Removed
