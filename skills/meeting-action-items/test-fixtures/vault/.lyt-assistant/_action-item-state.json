@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "last_run": "2026-06-02T18:00:00-07:00",
+  "items": {
+    "2026-06-02-sync::bb48def02e38": {
+      "meeting_dir": "2026-06-02-sync",
+      "text": "- [ ] **Ian:** Already-handled item stays hidden",
+      "status": "dismissed",
+      "todoist_url": null,
+      "decided_at": "2026-06-02T18:00:00-07:00"
+    }
+  }
+}
