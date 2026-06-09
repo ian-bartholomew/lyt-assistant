@@ -5,6 +5,12 @@ All notable changes to the LYT Assistant plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.18.0 (2026-06-09)
+
+- support-learnings: consult the EOD shared thread cache
+  (/tmp/eod-fes-support-cache.json) for thread bodies, falling back to live
+  Slack reads per thread. Adds vendored fes_support_cache.py helper.
+
 ## 2.17.0 (2026-06-09)
 
 - meeting-action-items 0.8.0: deterministic core script (meeting_action_items.py).
