@@ -166,6 +166,118 @@ def test_apply_dry_run():
         assert state["last_run"] is not None
 
 
+def test_apply_failing_td():
+    import os, shutil, stat
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        fakedir = Path(td_dir) / "fakebin"
+        fakedir.mkdir()
+        fake_td = fakedir / "td"
+        fake_td.write_text(
+            '#!/bin/sh\nif [ "$1" = "auth" ]; then exit 0; fi\n'
+            'echo "boom" >&2\nexit 1\n')
+        fake_td.chmod(fake_td.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                      | stat.S_IXOTH)
+        env = {**os.environ, "PATH": f"{fakedir}:{os.environ['PATH']}"}
+        listing = json.loads(subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "list", "--since", "2026-06-01"],
+            capture_output=True, text=True, check=True).stdout)
+        item = next(p for p in listing["pending"]
+                    if "quarterly report" in p["raw"])
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": item["key"], "meeting_dir": item["meeting_dir"],
+                 "raw": item["raw"], "action": "todo",
+                 "title": item["suggested"]["title"],
+                 "description": item["suggested"]["description"],
+                 "due": item["suggested"]["due"],
+                 "priority": item["suggested"]["priority"]},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply"],
+            input=json.dumps(payload), capture_output=True, text=True,
+            env=env)
+        assert out.returncode == 1, out.stderr
+        results = json.loads(out.stdout)["results"]
+        assert len(results) == 1
+        assert results[0]["outcome"] == "failed"
+        assert "boom" in results[0]["error"]
+        state = json.loads(
+            (vault / ".lyt-assistant" / "_action-item-state.json").read_text())
+        assert item["key"] not in state["items"]   # failed item not recorded
+        assert state["last_run"] != "2026-06-02T18:00:00-07:00"
+
+
+def test_apply_malformed_decision():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                # todo missing "title" must fail this item only
+                {"key": "bad1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] broken", "action": "todo",
+                 "description": "no title given"},
+                # batch continues: this dismiss must still succeed
+                {"key": "ok1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] fine", "action": "dismiss"},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run"],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 1, out.stderr
+        results = {r["key"]: r for r in json.loads(out.stdout)["results"]}
+        assert results["bad1"]["outcome"] == "failed"
+        assert "title" in results["bad1"]["error"]
+        assert results["ok1"]["outcome"] == "dismissed"
+        state = json.loads(
+            (vault / ".lyt-assistant" / "_action-item-state.json").read_text())
+        assert state["items"]["ok1"]["status"] == "dismissed"
+        assert "bad1" not in state["items"]
+        assert state["last_run"] != "2026-06-02T18:00:00-07:00"
+
+
+def test_days_since_mutual_exclusion():
+    out = subprocess.run(
+        [sys.executable, str(HERE / "meeting_action_items.py"),
+         "--vault", str(HERE / "test-fixtures" / "vault"),
+         "list", "--days", "2", "--since", "2026-06-01"],
+        capture_output=True, text=True)
+    assert out.returncode != 0
+    assert "not both" in out.stderr
+
+
+def test_unknown_action():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": "k1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] z", "action": "frobnicate"},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run"],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 1, out.stderr
+        results = json.loads(out.stdout)["results"]
+        assert results[0]["outcome"] == "failed"
+        assert "unknown action" in results[0]["error"]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

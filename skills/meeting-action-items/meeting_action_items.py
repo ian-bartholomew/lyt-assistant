@@ -146,7 +146,8 @@ def extract_action_items(summary_path: Path) -> list[str]:
     """Bullets under the Action Items heading (case-insensitive; optional
     bold markers and leading section number), until the next heading/EOF."""
     bullets, inside = [], False
-    for line in summary_path.read_text().splitlines():
+    text = summary_path.read_text(encoding="utf-8", errors="replace")
+    for line in text.splitlines():
         m = HEADING_RE.match(line)
         if m:
             if inside:
@@ -254,7 +255,10 @@ def td_add(title, priority, description, due, dry_run):
     if dry_run:
         print(f"DRY-RUN: {cmd}", file=sys.stderr)
         return True, "https://app.todoist.com/app/task/DRYRUN"
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return False, "td task add timed out after 30s"
     if r.returncode != 0:
         return False, (r.stderr or r.stdout).strip()
     m = re.search(r"^ID:\s+(\S+)", r.stdout, re.MULTILINE)
@@ -266,10 +270,24 @@ def cmd_apply(args) -> int:
     vault = Path(args.vault)
     state_file = vault / STATE_REL
     state = load_state(state_file)
-    payload = json.load(open(args.input)) if args.input else json.load(sys.stdin)
+    try:
+        if args.input:
+            with open(args.input) as f:
+                payload = json.load(f)
+        else:
+            payload = json.load(sys.stdin)
+    except FileNotFoundError:
+        sys.exit(f"Input file not found: {args.input}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"Invalid JSON input: {e}")
     if not args.dry_run:
-        if subprocess.run(["td", "auth", "status"],
-                          capture_output=True).returncode != 0:
+        try:
+            authed = subprocess.run(["td", "auth", "status"],
+                                    capture_output=True,
+                                    timeout=30).returncode == 0
+        except subprocess.TimeoutExpired:
+            authed = False
+        if not authed:
             sys.exit("Todoist CLI not authenticated. Run 'td auth login'.")
     results = []
 
@@ -284,28 +302,37 @@ def cmd_apply(args) -> int:
         results.append({"key": item["key"], "outcome": "auto-recorded"})
 
     for d in payload.get("decisions", []):
-        action = d["action"]
-        if action == "skip":
-            results.append({"key": d["key"], "outcome": "skipped"})
-            continue
-        if action == "dismiss":
-            record(d["key"], d["meeting_dir"], d["raw"], "dismissed", None)
-            results.append({"key": d["key"], "outcome": "dismissed"})
-            continue
-        if action == "todo":
-            ok, info = td_add(d["title"], d.get("priority", "p2"),
-                              d["description"], d.get("due", ""),
-                              args.dry_run)
-            if ok:
-                record(d["key"], d["meeting_dir"], d["raw"], "todoed", info)
-                results.append({"key": d["key"], "outcome": "created",
-                                "url": info})
-            else:
-                results.append({"key": d["key"], "outcome": "failed",
-                                "error": info})
-            continue
-        results.append({"key": d["key"], "outcome": "failed",
-                        "error": f"unknown action {action!r}"})
+        # Per-decision guard: a malformed decision (missing keys, wrong
+        # types) must fail just that item, not kill the batch mid-flight.
+        try:
+            action = d["action"]
+            if action == "skip":
+                results.append({"key": d["key"], "outcome": "skipped"})
+                continue
+            if action == "dismiss":
+                record(d["key"], d["meeting_dir"], d["raw"],
+                       "dismissed", None)
+                results.append({"key": d["key"], "outcome": "dismissed"})
+                continue
+            if action == "todo":
+                ok, info = td_add(d["title"], d.get("priority", "p2"),
+                                  d["description"], d.get("due", ""),
+                                  args.dry_run)
+                if ok:
+                    record(d["key"], d["meeting_dir"], d["raw"],
+                           "todoed", info)
+                    results.append({"key": d["key"], "outcome": "created",
+                                    "url": info})
+                else:
+                    results.append({"key": d["key"], "outcome": "failed",
+                                    "error": info})
+                continue
+            results.append({"key": d["key"], "outcome": "failed",
+                            "error": f"unknown action {action!r}"})
+        except Exception as e:
+            key = d.get("key", "?") if isinstance(d, dict) else "?"
+            results.append({"key": key, "outcome": "failed",
+                            "error": f"{type(e).__name__}: {e}"})
 
     state["last_run"] = iso_now()
     write_state(state_file, state)
