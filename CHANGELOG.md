@@ -5,6 +5,12 @@ All notable changes to the LYT Assistant plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.17.0 (2026-06-09)
+
+- meeting-action-items 0.8.0: deterministic core script (meeting_action_items.py).
+  list/apply subcommands, per-item atomic state writes, AskUserQuestion triage.
+  Removes the TTY-dependent bash read/EDITOR loop. State schema unchanged.
+
 ## [2.16.0] - 2026-06-08
 
 ### Changed
