@@ -89,7 +89,14 @@ For each thread in metadata where `status: unresolved`:
    - Threads whose `ts` already exists in metadata for this channel
    - Bot-only messages (Slackbot notifications, join messages)
 3. For each remaining thread, **one at a time:**
-   a. Read the full thread with `mcp__claude_ai_Slack__slack_read_thread`
+   a. Get the full thread body. First consult the EOD shared cache: run
+      `python3 <skill-dir>/fes_support_cache.py check` once per run; if
+      `trusted`, fetch each thread via
+      `python3 <skill-dir>/fes_support_cache.py get <ts>` and only fall back
+      to `mcp__claude_ai_Slack__slack_read_thread` on a miss (exit 1). If the
+      check reports untrusted (missing, stale beyond 6h, or malformed), use
+      `slack_read_thread` for every thread exactly as before. The cache holds
+      raw thread text only; all classification stays in this skill.
    b. Extract: title, requester, problem, resolution (if any), learning, suggested tags
    c. Determine status: `resolved` if a clear solution was reached, `unresolved` if still in discussion or no answer
    d. **Determine the file date:** Use the date the thread's parent message was posted (from the message timestamp), NOT today's date. Convert the Slack `ts` to a date.
@@ -194,3 +201,4 @@ threads:
 - **Channel not found:** Error with suggestion to check spelling
 - **Daily file already exists:** Append new H2 sections, do not overwrite
 - **Metadata missing or empty:** Create fresh, default to 24h lookback
+- **Cache present but thread missing:** normal (per-thread overlay) - live-fetch just that thread, do not distrust the whole cache
