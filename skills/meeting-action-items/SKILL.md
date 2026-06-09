@@ -25,11 +25,12 @@ state after every item so a crash never leaves a created task unrecorded.
 ### Step 1: List candidates
 
 ```bash
-python3 <skill-dir>/meeting_action_items.py list [--days N | --since YYYY-MM-DD]
+python3 ${CLAUDE_SKILL_DIR}/meeting_action_items.py list [--days N | --since YYYY-MM-DD]
 ```
 
-(`<skill-dir>` is this skill's base directory, announced when the skill
-loads.) Output JSON: `window`, `meetings_scanned`, `pending[]` (each with
+(`${CLAUDE_SKILL_DIR}` expands to this skill's directory; if it reaches
+you unexpanded, use the base directory announced when the skill loaded.)
+Output JSON: `window`, `meetings_scanned`, `pending[]` (each with
 `key`, `meeting_dir`, `raw`, and `suggested` {title, description, due,
 priority}), `auto_checked[]` (already `- [x]` in the summary), and
 `filtered_count` (excluded by the assignee allowlist, which lives at the top
@@ -80,7 +81,7 @@ volunteers a change in chat.
 Build the decisions JSON and pipe it in:
 
 ```bash
-python3 <skill-dir>/meeting_action_items.py apply --input /tmp/mai-decisions.json
+python3 ${CLAUDE_SKILL_DIR}/meeting_action_items.py apply --input /tmp/mai-decisions.json
 ```
 
 Input shape:
@@ -123,7 +124,7 @@ v0.7.x: items keyed `<meeting_dir>::<sha256(normalized_text)[:12]>` with
 ## Testing
 
 ```bash
-cd <skill-dir> && python3 test_meeting_action_items.py
+cd ${CLAUDE_SKILL_DIR} && python3 test_meeting_action_items.py
 ```
 
 Fixtures live in `test-fixtures/vault/`. `apply --dry-run` exercises the td
