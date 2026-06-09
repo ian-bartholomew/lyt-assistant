@@ -37,6 +37,11 @@ of the script).
 
 `list` is pure: it never writes state, so it is always safe to re-run.
 
+If `list` exits non-zero, abort the run and show its stderr verbatim. Do
+not treat missing output as an empty pending list: a corrupt or
+version-mismatched state file is a stop-the-line error, not a
+nothing-to-do.
+
 If `pending` is empty: run `apply` with just the `auto_checked` items
 (Step 4, empty decisions list), then report "Nothing new in the window
 across N meeting(s) (M filtered by assignee)." and stop.
@@ -51,9 +56,11 @@ NOT attempt one multi-select across items.
 
 If there are more than 12 pending items, first show the full numbered list
 in plain text and ask for a free-text bulk command (for example "todo 2,4,5;
-dismiss rest"). Parse it, echo the plan, confirm with one AskUserQuestion,
-and fall through to per-item questions only for items the command left
-ambiguous.
+dismiss rest"). Parse it, echo the plan (noting any out-of-range indices, which are
+ignored), confirm with one AskUserQuestion, then fall through to per-item
+questions for every item the command did not explicitly address.
+Unaddressed items are never silently skipped or dismissed: the per-item
+question is the safe default.
 
 ### Step 3: Due and priority for the todos
 
@@ -95,7 +102,11 @@ atomically per item, updates `last_run`, and prints a results JSON (created
 URL / dismissed / skipped / failed with the error). A malformed decision
 fails that item and the batch continues. Exit code 1 means at
 least one item failed: surface those failures verbatim and offer to re-run
-`apply` with just the failed items.
+`apply` with a new input containing ONLY the failed items in `decisions`
+and an EMPTY `auto_checked` list (re-submitting the original input would
+re-record already-applied items). If apply aborted before the batch
+started (td not authenticated, unreadable --input), fix the cause and
+re-run the original input unchanged.
 
 ### Step 5: Report
 
