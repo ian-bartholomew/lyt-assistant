@@ -314,6 +314,29 @@ def td_add(title, priority, description, due, dry_run):
                   if m else None)
 
 
+def fetch_open_titles(dry_run: bool) -> list[str]:
+    """Open Work-project task titles via td. Empty list on ANY failure:
+    dedup is a best-effort backstop, never a hard dependency. Uses --all to
+    page past the 300-task default."""
+    if dry_run:
+        return []
+    try:
+        r = subprocess.run(
+            ["td", "task", "list", "--project", "Work", "--all", "--json"],
+            capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return []
+    if r.returncode != 0:
+        return []
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return []
+    results = data.get("results", []) if isinstance(data, dict) else data
+    return [t.get("content", "") for t in results
+            if isinstance(t, dict) and t.get("content")]
+
+
 def cmd_apply(args) -> int:
     vault = Path(args.vault)
     state_file = vault / STATE_REL
@@ -337,6 +360,11 @@ def cmd_apply(args) -> int:
             authed = False
         if not authed:
             sys.exit("Todoist CLI not authenticated. Run 'td auth login'.")
+    if args.existing_todos:
+        with open(args.existing_todos) as f:
+            existing_titles = list(json.load(f))
+    else:
+        existing_titles = fetch_open_titles(args.dry_run)
     results = []
 
     def record(key, meeting_dir, raw, status, url):
@@ -363,12 +391,20 @@ def cmd_apply(args) -> int:
                 results.append({"key": d["key"], "outcome": "dismissed"})
                 continue
             if action == "todo":
+                matched = find_duplicate(d["title"], existing_titles)
+                if matched is not None:
+                    # non-terminal: skip creation, do NOT record state, so it
+                    # resurfaces if the matched live todo is later completed.
+                    results.append({"key": d["key"], "outcome": "duplicate",
+                                    "matched": matched})
+                    continue
                 ok, info = td_add(d["title"], d.get("priority", "p2"),
                                   d["description"], d.get("due", ""),
                                   args.dry_run)
                 if ok:
                     record(d["key"], d["meeting_dir"], d["raw"],
                            "todoed", info)
+                    existing_titles.append(d["title"])  # dedup later batch items
                     results.append({"key": d["key"], "outcome": "created",
                                     "url": info})
                 else:
@@ -399,6 +435,7 @@ def main() -> int:
     pa = sub.add_parser("apply")
     pa.add_argument("--input")
     pa.add_argument("--dry-run", action="store_true")
+    pa.add_argument("--existing-todos")
     args = p.parse_args()
     return cmd_list(args) if args.cmd == "list" else cmd_apply(args)
 
