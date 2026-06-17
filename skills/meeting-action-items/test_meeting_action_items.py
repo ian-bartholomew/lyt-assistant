@@ -256,6 +256,36 @@ def test_days_since_mutual_exclusion():
     assert "not both" in out.stderr
 
 
+def test_dedup_normalize():
+    assert mai.dedup_normalize("- [ ] Email Bob!") == "email bob"
+    assert mai.dedup_normalize("Email   Bob.") == "email bob"
+    assert mai.dedup_normalize("Review PR #1842 (urgent)") == "review pr 1842 urgent"
+    # NFKC fold + emoji/punct become separators, not retained
+    assert mai.dedup_normalize("Ship — the 🚀 release") == "ship the release"
+
+
+def test_title_similarity():
+    assert mai.title_similarity("Email Bob", "email bob.") == 1.0
+    # distinct short title must NOT merge into a longer one (data-loss guard)
+    assert mai.title_similarity(
+        "Email Bob", "Email Bob about the Q3 contract") < mai.DEDUP_THRESHOLD
+    # reworded-but-same significant tokens scores high
+    assert mai.title_similarity(
+        "follow up with Dave on kafka rollout",
+        "follow up with Dave on the kafka rollout") >= mai.DEDUP_THRESHOLD
+
+
+def test_find_duplicate():
+    existing = ["Email Bob about the Q3 contract", "Review the deploy runbook"]
+    # normalized-equality match
+    assert mai.find_duplicate("review the deploy runbook!", existing) == \
+        "Review the deploy runbook"
+    # distinct short title is NOT a duplicate (would have been with substring)
+    assert mai.find_duplicate("Email Bob", existing) is None
+    # nothing matches
+    assert mai.find_duplicate("Write the design doc", existing) is None
+
+
 def test_unknown_action():
     import shutil
     with tempfile.TemporaryDirectory() as td_dir:

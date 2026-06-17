@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -57,6 +58,53 @@ def normalize(s: str) -> str:
 def key_for(meeting_dir: str, normalized: str) -> str:
     h = hashlib.sha256(normalized.encode()).hexdigest()[:12]
     return f"{meeting_dir}::{h}"
+
+
+DEDUP_THRESHOLD = 0.85
+DEDUP_STOPWORDS = {
+    "the", "a", "an", "to", "of", "for", "and", "with",
+    "on", "in", "re", "about", "please",
+}
+
+
+def dedup_normalize(s: str) -> str:
+    """Aggressive normalization for cross-todo dedup. Distinct from
+    normalize() (which mirrors the legacy state-key bash chain): NFKC fold,
+    strip a leading bullet/checkbox, lowercase, replace every non-word char
+    with a space, collapse whitespace."""
+    s = unicodedata.normalize("NFKC", s)
+    s = BULLET_RE.sub("", s)
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def dedup_tokens(s: str) -> set:
+    return {t for t in dedup_normalize(s).split() if t not in DEDUP_STOPWORDS}
+
+
+def title_similarity(a: str, b: str) -> float:
+    """Jaccard over significant tokens. 1.0 == identical significant-token
+    sets. Substring containment deliberately does NOT score high."""
+    ta, tb = dedup_tokens(a), dedup_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def find_duplicate(candidate: str, existing: list[str]) -> str | None:
+    """First existing title that is a normalized-equal or high-token-overlap
+    match for candidate, else None. Never uses substring containment."""
+    cnorm = dedup_normalize(candidate)
+    if cnorm:
+        for e in existing:
+            if dedup_normalize(e) == cnorm:
+                return e
+    for e in existing:
+        if title_similarity(candidate, e) >= DEDUP_THRESHOLD:
+            return e
+    return None
 
 
 def body_of(raw: str) -> str:
