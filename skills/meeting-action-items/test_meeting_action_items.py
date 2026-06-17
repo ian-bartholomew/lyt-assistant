@@ -213,6 +213,54 @@ def test_apply_failing_td():
         assert state["last_run"] != "2026-06-02T18:00:00-07:00"
 
 
+def test_apply_dedup_malformed_td_json():
+    import os, shutil, stat
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        fakedir = Path(td_dir) / "fakebin"
+        fakedir.mkdir()
+        fake_td = fakedir / "td"
+        fake_td.write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = "auth" ]; then exit 0; fi\n'
+            'echo "{\"results\": null}"\n'
+            'exit 0\n')
+        fake_td.chmod(fake_td.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                      | stat.S_IXOTH)
+        env = {**os.environ, "PATH": f"{fakedir}:{os.environ['PATH']}"}
+        listing = json.loads(subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "list", "--since", "2026-06-01"],
+            capture_output=True, text=True, check=True).stdout)
+        item = next(p for p in listing["pending"]
+                    if "quarterly report" in p["raw"])
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": item["key"], "meeting_dir": item["meeting_dir"],
+                 "raw": item["raw"], "action": "todo",
+                 "title": item["suggested"]["title"],
+                 "description": item["suggested"]["description"],
+                 "due": item["suggested"]["due"],
+                 "priority": item["suggested"]["priority"]},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply"],
+            input=json.dumps(payload), capture_output=True, text=True,
+            env=env)
+        assert out.returncode == 0, out.stderr
+        results = json.loads(out.stdout)["results"]
+        assert len(results) == 1
+        assert results[0]["outcome"] == "created"
+        state = json.loads(
+            (vault / ".lyt-assistant" / "_action-item-state.json").read_text())
+        assert item["key"] in state["items"]
+        assert state["items"][item["key"]]["status"] == "todoed"
+
+
 def test_apply_malformed_decision():
     import shutil
     with tempfile.TemporaryDirectory() as td_dir:

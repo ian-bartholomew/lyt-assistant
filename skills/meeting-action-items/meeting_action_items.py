@@ -333,6 +333,8 @@ def fetch_open_titles(dry_run: bool) -> list[str]:
     except json.JSONDecodeError:
         return []
     results = data.get("results", []) if isinstance(data, dict) else data
+    if not isinstance(results, list):
+        return []
     return [t.get("content", "") for t in results
             if isinstance(t, dict) and t.get("content")]
 
