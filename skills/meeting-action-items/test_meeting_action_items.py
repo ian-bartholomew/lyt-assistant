@@ -256,6 +256,36 @@ def test_days_since_mutual_exclusion():
     assert "not both" in out.stderr
 
 
+def test_dedup_normalize():
+    assert mai.dedup_normalize("- [ ] Email Bob!") == "email bob"
+    assert mai.dedup_normalize("Email   Bob.") == "email bob"
+    assert mai.dedup_normalize("Review PR #1842 (urgent)") == "review pr 1842 urgent"
+    # NFKC fold + emoji/punct become separators, not retained
+    assert mai.dedup_normalize("Ship — the 🚀 release") == "ship the release"
+
+
+def test_title_similarity():
+    assert mai.title_similarity("Email Bob", "email bob.") == 1.0
+    # distinct short title must NOT merge into a longer one (data-loss guard)
+    assert mai.title_similarity(
+        "Email Bob", "Email Bob about the Q3 contract") < mai.DEDUP_THRESHOLD
+    # reworded-but-same significant tokens scores high
+    assert mai.title_similarity(
+        "follow up with Dave on kafka rollout",
+        "follow up with Dave on the kafka rollout") >= mai.DEDUP_THRESHOLD
+
+
+def test_find_duplicate():
+    existing = ["Email Bob about the Q3 contract", "Review the deploy runbook"]
+    # normalized-equality match
+    assert mai.find_duplicate("review the deploy runbook!", existing) == \
+        "Review the deploy runbook"
+    # distinct short title is NOT a duplicate (would have been with substring)
+    assert mai.find_duplicate("Email Bob", existing) is None
+    # nothing matches
+    assert mai.find_duplicate("Write the design doc", existing) is None
+
+
 def test_unknown_action():
     import shutil
     with tempfile.TemporaryDirectory() as td_dir:
@@ -276,6 +306,78 @@ def test_unknown_action():
         results = json.loads(out.stdout)["results"]
         assert results[0]["outcome"] == "failed"
         assert "unknown action" in results[0]["error"]
+
+
+def test_apply_dedup_skips_existing():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        existing = Path(td_dir) / "existing.json"
+        existing.write_text(json.dumps(["Send the quarterly report by Friday"]))
+        payload = {"auto_checked": [], "decisions": [
+            {"key": "dup1", "meeting_dir": "2026-06-01-standup",
+             "raw": "- [ ] Send the quarterly report by Friday",
+             "action": "todo", "title": "Send the quarterly report by Friday",
+             "description": "d", "due": "Friday", "priority": "p2"}]}
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run",
+             "--existing-todos", str(existing)],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        res = json.loads(out.stdout)["results"][0]
+        assert res["outcome"] == "duplicate"
+        assert res["matched"] == "Send the quarterly report by Friday"
+        state = json.loads(
+            (vault / ".lyt-assistant" / "_action-item-state.json").read_text())
+        assert "dup1" not in state["items"]          # non-terminal: not recorded
+        assert state["last_run"] is not None          # run still completes
+
+
+def test_apply_dedup_distinct_short_title_not_skipped():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        existing = Path(td_dir) / "existing.json"
+        existing.write_text(json.dumps(["Email Bob about the Q3 contract"]))
+        payload = {"auto_checked": [], "decisions": [
+            {"key": "short1", "meeting_dir": "2026-06-01-standup",
+             "raw": "- [ ] Email Bob", "action": "todo", "title": "Email Bob",
+             "description": "d", "due": "", "priority": "p2"}]}
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run",
+             "--existing-todos", str(existing)],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        assert json.loads(out.stdout)["results"][0]["outcome"] == "created"
+
+
+def test_apply_dedup_batch_self():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        existing = Path(td_dir) / "existing.json"
+        existing.write_text(json.dumps([]))     # nothing pre-existing
+        payload = {"auto_checked": [], "decisions": [
+            {"key": "a", "meeting_dir": "2026-06-01-standup", "raw": "- [ ] x",
+             "action": "todo", "title": "Draft the launch checklist",
+             "description": "d", "due": "", "priority": "p2"},
+            {"key": "b", "meeting_dir": "2026-06-01-standup", "raw": "- [ ] y",
+             "action": "todo", "title": "draft the launch checklist!",
+             "description": "d", "due": "", "priority": "p2"}]}
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run",
+             "--existing-todos", str(existing)],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        res = {r["key"]: r["outcome"] for r in json.loads(out.stdout)["results"]}
+        assert res["a"] == "created"
+        assert res["b"] == "duplicate"      # matched the just-created sibling
 
 
 if __name__ == "__main__":

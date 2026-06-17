@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -57,6 +58,53 @@ def normalize(s: str) -> str:
 def key_for(meeting_dir: str, normalized: str) -> str:
     h = hashlib.sha256(normalized.encode()).hexdigest()[:12]
     return f"{meeting_dir}::{h}"
+
+
+DEDUP_THRESHOLD = 0.85
+DEDUP_STOPWORDS = {
+    "the", "a", "an", "to", "of", "for", "and", "with",
+    "on", "in", "re", "about", "please",
+}
+
+
+def dedup_normalize(s: str) -> str:
+    """Aggressive normalization for cross-todo dedup. Distinct from
+    normalize() (which mirrors the legacy state-key bash chain): NFKC fold,
+    strip a leading bullet/checkbox, lowercase, replace every non-word char
+    with a space, collapse whitespace."""
+    s = unicodedata.normalize("NFKC", s)
+    s = BULLET_RE.sub("", s)
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def dedup_tokens(s: str) -> set:
+    return {t for t in dedup_normalize(s).split() if t not in DEDUP_STOPWORDS}
+
+
+def title_similarity(a: str, b: str) -> float:
+    """Jaccard over significant tokens. 1.0 == identical significant-token
+    sets. Substring containment deliberately does NOT score high."""
+    ta, tb = dedup_tokens(a), dedup_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def find_duplicate(candidate: str, existing: list[str]) -> str | None:
+    """First existing title that is a normalized-equal or high-token-overlap
+    match for candidate, else None. Never uses substring containment."""
+    cnorm = dedup_normalize(candidate)
+    if cnorm:
+        for e in existing:
+            if dedup_normalize(e) == cnorm:
+                return e
+    for e in existing:
+        if title_similarity(candidate, e) >= DEDUP_THRESHOLD:
+            return e
+    return None
 
 
 def body_of(raw: str) -> str:
@@ -266,6 +314,29 @@ def td_add(title, priority, description, due, dry_run):
                   if m else None)
 
 
+def fetch_open_titles(dry_run: bool) -> list[str]:
+    """Open Work-project task titles via td. Empty list on ANY failure:
+    dedup is a best-effort backstop, never a hard dependency. Uses --all to
+    page past the 300-task default."""
+    if dry_run:
+        return []
+    try:
+        r = subprocess.run(
+            ["td", "task", "list", "--project", "Work", "--all", "--json"],
+            capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return []
+    if r.returncode != 0:
+        return []
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return []
+    results = data.get("results", []) if isinstance(data, dict) else data
+    return [t.get("content", "") for t in results
+            if isinstance(t, dict) and t.get("content")]
+
+
 def cmd_apply(args) -> int:
     vault = Path(args.vault)
     state_file = vault / STATE_REL
@@ -289,6 +360,11 @@ def cmd_apply(args) -> int:
             authed = False
         if not authed:
             sys.exit("Todoist CLI not authenticated. Run 'td auth login'.")
+    if args.existing_todos:
+        with open(args.existing_todos) as f:
+            existing_titles = list(json.load(f))
+    else:
+        existing_titles = fetch_open_titles(args.dry_run)
     results = []
 
     def record(key, meeting_dir, raw, status, url):
@@ -315,12 +391,20 @@ def cmd_apply(args) -> int:
                 results.append({"key": d["key"], "outcome": "dismissed"})
                 continue
             if action == "todo":
+                matched = find_duplicate(d["title"], existing_titles)
+                if matched is not None:
+                    # non-terminal: skip creation, do NOT record state, so it
+                    # resurfaces if the matched live todo is later completed.
+                    results.append({"key": d["key"], "outcome": "duplicate",
+                                    "matched": matched})
+                    continue
                 ok, info = td_add(d["title"], d.get("priority", "p2"),
                                   d["description"], d.get("due", ""),
                                   args.dry_run)
                 if ok:
                     record(d["key"], d["meeting_dir"], d["raw"],
                            "todoed", info)
+                    existing_titles.append(d["title"])  # dedup later batch items
                     results.append({"key": d["key"], "outcome": "created",
                                     "url": info})
                 else:
@@ -351,6 +435,7 @@ def main() -> int:
     pa = sub.add_parser("apply")
     pa.add_argument("--input")
     pa.add_argument("--dry-run", action="store_true")
+    pa.add_argument("--existing-todos")
     args = p.parse_args()
     return cmd_list(args) if args.cmd == "list" else cmd_apply(args)
 
