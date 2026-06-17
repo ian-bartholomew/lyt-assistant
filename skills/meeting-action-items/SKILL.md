@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "Action Items" sections, and triages each via AskUserQuestion (todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.8.0
+version: 0.9.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion]
 ---
@@ -108,6 +108,18 @@ and an EMPTY `auto_checked` list (re-submitting the original input would
 re-record already-applied items). If apply aborted before the batch
 started (td not authenticated, unreadable --input), fix the cause and
 re-run the original input unchanged.
+
+`apply` also dedups every `todo` against the live Todoist Work project
+(`td task list --project Work --all --json`) before creating it. A candidate
+whose title is a normalized-equal or high-token-overlap (>= 0.85) match for an
+existing open task returns outcome `duplicate` (with the matched title) and is
+**not created and not recorded in state** -- so it resurfaces next run if the
+matched live todo is later completed. Substring containment is never used, so a
+short title ("Email Bob") is not swallowed by a longer one ("Email Bob about
+the Q3 contract"). Callers driving non-interactive runs MUST mark a
+model-detected semantic duplicate as `skip` (non-terminal), never `dismiss`
+(terminal) -- permanent suppression of an action item is reserved for an
+explicit user decision.
 
 ### Step 5: Report
 
