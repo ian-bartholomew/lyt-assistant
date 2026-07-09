@@ -1,7 +1,7 @@
 ---
 name: meeting-action-items
 description: This skill should be used when the user asks to "review meeting action items", "process meeting follow-ups", "extract action items from meetings", "make todos from meetings", or wants to convert recent meeting action items into Todoist tasks. Scans `meetings/` for summaries in a configurable lookback window (default: since last run, fallback 2 days), extracts items from "Action Items" sections, and triages each via AskUserQuestion (todo / dismiss / skip). Already-handled items are tracked in `.lyt-assistant/_action-item-state.json` so they don't re-appear.
-version: 0.9.0
+version: 0.10.0
 argument-hint: "[--days N | --since YYYY-MM-DD]"
 allowed-tools: [Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion]
 ---
@@ -9,11 +9,12 @@ allowed-tools: [Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion]
 # Meeting Action Items Skill
 
 All mechanical work lives in `meeting_action_items.py` next to this file
-(Python 3 stdlib, no dependencies). The model's job is exactly three things:
-run `list`, triage via AskUserQuestion, run `apply`. Never reimplement the
-parsing, dedup, assignee filtering, or state writes inline, and never call
-`td` or edit the state file directly: `apply` owns all mutation and flushes
-state after every item so a crash never leaves a created task unrecorded.
+(Python 3 stdlib, no dependencies). The model's job: run `list`, triage via
+AskUserQuestion, assign labels, run `apply`. Never reimplement the parsing,
+dedup, assignee filtering, label creation, or state writes inline, and never
+call `td` or edit the state file directly: `apply` owns all mutation
+(including creating any missing labels as personal labels) and flushes state
+after every item so a crash never leaves a created task unrecorded.
 
 ## Prerequisites
 
@@ -44,7 +45,7 @@ version-mismatched state file is a stop-the-line error, not a
 nothing-to-do.
 
 If `pending` is empty: run `apply` with just the `auto_checked` items
-(Step 4, empty decisions list), then report "Nothing new in the window
+(Step 5, empty decisions list), then report "Nothing new in the window
 across N meeting(s) (M filtered by assignee)." and stop.
 
 ### Step 2: Triage
@@ -63,7 +64,35 @@ questions for every item the command did not explicitly address.
 Unaddressed items are never silently skipped or dismissed: the per-item
 question is the safe default.
 
-### Step 3: Due and priority for the todos
+### Step 3: Labels for the todos
+
+Assign labels to each Todo item. This is a judgment call, so the model does it
+(the script only creates and applies whatever labels you decide). Gather two
+inputs once, up front:
+
+- Existing labels: `td label list`
+- Vault projects: the non-archived directories under `~/Documents/Work/projects/`
+  (each maps 1:1 to a `proj-<dir-name>` label).
+
+Convention (do not deviate): **lowercase kebab-case**, no spaces/underscores/caps.
+Project labels are `proj-` + the exact Obsidian project folder name. Theme labels
+are bare kebab. **Kanban state lives in Todoist sections, never in labels** — never
+create `backlog` / `in-progress` / `blocked` / etc.
+
+For each Todo, pick labels in this order:
+
+1. **Project** — if the item belongs to an active project (match the meeting topic
+   or item text to a `projects/` dir), add that `proj-<name>` label.
+2. **Existing theme** — reuse any existing label that fits (from `td label list`).
+3. **New theme** — only if nothing above fits, propose a new kebab-case label.
+
+Surface new labels you intend to create in one AskUserQuestion (list them, options
+Create / Skip) before including them — an existing label always wins over a new
+near-duplicate. `apply` creates any label that doesn't already exist as a personal
+label; this is required because `td task add --labels` would otherwise auto-create
+missing names as un-manageable **shared** labels. A Todo may have zero labels.
+
+### Step 4: Due and priority for the todos
 
 For each item marked Todo, one AskUserQuestion round sets fields, two
 questions per todo (so two todos per call):
@@ -76,7 +105,7 @@ questions per todo (so two todos per call):
 Title and description always use the script's suggestions unless the user
 volunteers a change in chat.
 
-### Step 4: Apply
+### Step 5: Apply
 
 Build the decisions JSON and pipe it in:
 
@@ -91,7 +120,8 @@ Input shape:
   "auto_checked": [ {"key": "...", "meeting_dir": "...", "raw": "..."} ],
   "decisions": [
     {"key": "...", "meeting_dir": "...", "raw": "...", "action": "todo",
-     "title": "...", "description": "...", "due": "tomorrow", "priority": "p2"},
+     "title": "...", "description": "...", "due": "tomorrow", "priority": "p2",
+     "labels": ["proj-load-testing-environment", "documentation"]},
     {"key": "...", "meeting_dir": "...", "raw": "...", "action": "dismiss"},
     {"key": "...", "meeting_dir": "...", "raw": "...", "action": "skip"}
   ]
@@ -100,7 +130,11 @@ Input shape:
 
 `apply` creates Todoist tasks (project `Work`) via `td`, records state
 atomically per item, updates `last_run`, and prints a results JSON (created
-URL / dismissed / skipped / failed with the error). A malformed decision
+URL / dismissed / skipped / failed with the error). Before creating tasks it
+creates any label in `labels` that is not already a personal label, and adds
+`created_labels` / `label_warnings` to the output when relevant. Label
+creation is best-effort: a failed label becomes a warning, not a stopped
+batch. The `labels` field is optional per decision. A malformed decision
 fails that item and the batch continues. Exit code 1 means at
 least one item failed: surface those failures verbatim and offer to re-run
 `apply` with a new input containing ONLY the failed items in `decisions`
@@ -121,7 +155,7 @@ model-detected semantic duplicate as `skip` (non-terminal), never `dismiss`
 (terminal) -- permanent suppression of an action item is reserved for an
 explicit user decision.
 
-### Step 5: Report
+### Step 6: Report
 
 One line: "Made X todos, dismissed Y, skipped Z. (M filtered by assignee,
 K auto-recorded as done.)" plus the created task URLs.
