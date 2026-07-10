@@ -294,6 +294,126 @@ def test_apply_malformed_decision():
         assert state["last_run"] != "2026-06-02T18:00:00-07:00"
 
 
+def test_apply_creates_missing_labels():
+    """apply must pre-create labels that aren't already personal labels (so
+    td task add binds to personal, not un-manageable shared, labels) and pass
+    --labels through to task add."""
+    import os, shutil, stat
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        fakedir = Path(td_dir) / "fakebin"
+        fakedir.mkdir()
+        log = Path(td_dir) / "td.log"
+        fake_td = fakedir / "td"
+        # documentation already exists; proj-x does not -> must be created.
+        # task list returns no dupes so the todo is created.
+        fake_td.write_text(
+            '#!/bin/sh\n'
+            'printf "%s\\n" "$*" >> "$TD_LOG"\n'
+            'if [ "$1 $2" = "auth status" ]; then exit 0; fi\n'
+            'if [ "$1 $2" = "task list" ]; then echo \'{"results":[]}\'; exit 0; fi\n'
+            'if [ "$1 $2" = "label list" ]; then '
+            'echo \'{"results":[{"name":"documentation","id":"1"}]}\'; exit 0; fi\n'
+            'if [ "$1 $2" = "label create" ]; then exit 0; fi\n'
+            'if [ "$1 $2" = "task add" ]; then echo "ID: ABC123"; exit 0; fi\n'
+            'exit 0\n')
+        fake_td.chmod(fake_td.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                      | stat.S_IXOTH)
+        env = {**os.environ, "PATH": f"{fakedir}:{os.environ['PATH']}",
+               "TD_LOG": str(log)}
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": "k1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] a", "action": "todo", "title": "T",
+                 "description": "D", "due": "", "priority": "p2",
+                 "labels": ["proj-load-testing-environment", "documentation"]},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply"],
+            input=json.dumps(payload), capture_output=True, text=True, env=env)
+        assert out.returncode == 0, out.stderr
+        data = json.loads(out.stdout)
+        assert data["results"][0]["outcome"] == "created"
+        # only the missing label is created, not the existing one
+        assert data["created_labels"] == ["proj-load-testing-environment"]
+        log_text = log.read_text()
+        assert "label create --name proj-load-testing-environment" in log_text
+        assert "label create --name documentation" not in log_text
+        assert "--labels proj-load-testing-environment,documentation" in log_text
+
+
+def test_apply_labels_malformed_label_list_json():
+    """A non-{results:[...]} shape from `td label list` must not crash apply
+    (mirrors the fetch_open_titles hardening); labels are still applied."""
+    import os, shutil, stat
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        fakedir = Path(td_dir) / "fakebin"
+        fakedir.mkdir()
+        log = Path(td_dir) / "td.log"
+        fake_td = fakedir / "td"
+        # label list returns {"results": null} -> must coerce to empty, not crash
+        fake_td.write_text(
+            '#!/bin/sh\n'
+            'printf "%s\\n" "$*" >> "$TD_LOG"\n'
+            'if [ "$1 $2" = "auth status" ]; then exit 0; fi\n'
+            'if [ "$1 $2" = "task list" ]; then echo \'{"results":[]}\'; exit 0; fi\n'
+            'if [ "$1 $2" = "label list" ]; then echo \'{"results":null}\'; exit 0; fi\n'
+            'if [ "$1 $2" = "label create" ]; then exit 0; fi\n'
+            'if [ "$1 $2" = "task add" ]; then echo "ID: ABC123"; exit 0; fi\n'
+            'exit 0\n')
+        fake_td.chmod(fake_td.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                      | stat.S_IXOTH)
+        env = {**os.environ, "PATH": f"{fakedir}:{os.environ['PATH']}",
+               "TD_LOG": str(log)}
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": "k1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] a", "action": "todo", "title": "T",
+                 "description": "D", "due": "", "priority": "p2",
+                 "labels": ["on-call"]},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply"],
+            input=json.dumps(payload), capture_output=True, text=True, env=env)
+        assert out.returncode == 0, out.stderr
+        data = json.loads(out.stdout)
+        assert data["results"][0]["outcome"] == "created"
+        assert "--labels on-call" in log.read_text()
+
+
+def test_apply_labels_must_be_list():
+    import shutil
+    with tempfile.TemporaryDirectory() as td_dir:
+        vault = Path(td_dir) / "vault"
+        shutil.copytree(HERE / "test-fixtures" / "vault", vault)
+        payload = {
+            "auto_checked": [],
+            "decisions": [
+                {"key": "k1", "meeting_dir": "2026-06-01-standup",
+                 "raw": "- [ ] a", "action": "todo", "title": "T",
+                 "description": "D", "due": "", "priority": "p2",
+                 "labels": "not-a-list"},
+            ],
+        }
+        out = subprocess.run(
+            [sys.executable, str(HERE / "meeting_action_items.py"),
+             "--vault", str(vault), "apply", "--dry-run"],
+            input=json.dumps(payload), capture_output=True, text=True)
+        assert out.returncode == 1, out.stderr
+        results = json.loads(out.stdout)["results"]
+        assert results[0]["outcome"] == "failed"
+        assert "labels must be a list" in results[0]["error"]
+
+
 def test_days_since_mutual_exclusion():
     out = subprocess.run(
         [sys.executable, str(HERE / "meeting_action_items.py"),

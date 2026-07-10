@@ -295,11 +295,66 @@ def cmd_list(args) -> int:
     return 0
 
 
-def td_add(title, priority, description, due, dry_run):
+def list_existing_labels():
+    """Names of existing labels, or None if the lookup fails."""
+    try:
+        r = subprocess.run(["td", "label", "list", "--json"],
+                           capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+    results = data.get("results", []) if isinstance(data, dict) else data
+    if not isinstance(results, list):
+        return set()
+    return {l.get("name") for l in results
+            if isinstance(l, dict) and l.get("name")}
+
+
+def ensure_labels(wanted, dry_run):
+    """Create any wanted label that isn't already a personal label, so
+    `td task add --labels` binds to manageable personal labels rather than
+    auto-creating un-deletable shared labels. Best-effort: a create failure
+    becomes a warning, not a hard stop. Returns (created, warnings)."""
+    created, warnings = [], []
+    if not wanted:
+        return created, warnings
+    if dry_run:
+        for name in sorted(wanted):
+            print(f"DRY-RUN: ensure label {name!r}", file=sys.stderr)
+        return created, warnings
+    existing = list_existing_labels()
+    if existing is None:
+        warnings.append("could not list existing labels; new labels may be "
+                        "created as un-manageable shared labels")
+        return created, warnings
+    for name in sorted(wanted):
+        if name in existing:
+            continue
+        try:
+            r = subprocess.run(["td", "label", "create", "--name", name],
+                               capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            warnings.append(f"label {name!r}: create timed out after 30s")
+            continue
+        if r.returncode == 0:
+            created.append(name)
+        else:
+            warnings.append(f"label {name!r}: {(r.stderr or r.stdout).strip()}")
+    return created, warnings
+
+
+def td_add(title, priority, description, due, labels, dry_run):
     cmd = ["td", "task", "add", title, "--project", "Work",
            "--priority", priority, "--description", description]
     if due:
         cmd += ["--due", due]
+    if labels:
+        cmd += ["--labels", ",".join(labels)]
     if dry_run:
         print(f"DRY-RUN: {cmd}", file=sys.stderr)
         return True, "https://app.todoist.com/app/task/DRYRUN"
@@ -369,6 +424,14 @@ def cmd_apply(args) -> int:
         existing_titles = fetch_open_titles(args.dry_run)
     results = []
 
+    wanted = set()
+    for d in payload.get("decisions", []):
+        if isinstance(d, dict) and d.get("action") == "todo":
+            lbls = d.get("labels")
+            if isinstance(lbls, list):
+                wanted.update(x for x in lbls if isinstance(x, str) and x)
+    created_labels, label_warnings = ensure_labels(wanted, args.dry_run)
+
     def record(key, meeting_dir, raw, status, url):
         state["items"][key] = {
             "meeting_dir": meeting_dir, "text": raw, "status": status,
@@ -400,9 +463,12 @@ def cmd_apply(args) -> int:
                     results.append({"key": d["key"], "outcome": "duplicate",
                                     "matched": matched})
                     continue
+                lbls = d.get("labels") or []
+                if not isinstance(lbls, list):
+                    raise TypeError("labels must be a list")
                 ok, info = td_add(d["title"], d.get("priority", "p2"),
                                   d["description"], d.get("due", ""),
-                                  args.dry_run)
+                                  lbls, args.dry_run)
                 if ok:
                     record(d["key"], d["meeting_dir"], d["raw"],
                            "todoed", info)
@@ -422,7 +488,12 @@ def cmd_apply(args) -> int:
 
     state["last_run"] = iso_now()
     write_state(state_file, state)
-    json.dump({"results": results}, sys.stdout, indent=2)
+    out = {"results": results}
+    if created_labels:
+        out["created_labels"] = created_labels
+    if label_warnings:
+        out["label_warnings"] = label_warnings
+    json.dump(out, sys.stdout, indent=2)
     print()
     return 1 if any(r["outcome"] == "failed" for r in results) else 0
 
