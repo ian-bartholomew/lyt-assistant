@@ -1,6 +1,6 @@
 {
   "name": "lyt-assistant",
-  "version": "2.18.1",
+  "version": "2.18.2",
   "description": "Karpathy-style LLM wiki system for Obsidian — automated conversation capture, knowledge compilation, Slack channel extraction, and interactive wiki management",
   "author": {
     "name": "Ian Bartholomew",
