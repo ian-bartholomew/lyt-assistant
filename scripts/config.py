@@ -6,6 +6,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
+# The compiler/flush scripts spawn vault-rooted Claude Code children via the Agent SDK, which
+# inherit this process's env. Those children's Honcho SessionEnd hooks would otherwise flush the
+# giant vault-inlined transcript into a shared Honcho session and swamp the deriver. Disable Honcho
+# for this automation only; interactive Claude sessions never import this module, so they keep it.
+os.environ.setdefault("HONCHO_ENABLED", "false")
+
+
 # ── Plugin paths (where the code lives) ─────────────────────────────
 COMPILER_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = COMPILER_DIR / "scripts"
