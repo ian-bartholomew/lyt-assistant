@@ -5,6 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+TEXT_BLOCK_TYPES = ("text", "input_text", "output_text")
+
+
+def _block_text(block: object) -> str:
+    if isinstance(block, str):
+        return block
+    if isinstance(block, dict) and block.get("type") in TEXT_BLOCK_TYPES:
+        return block.get("text") or ""
+    return ""
+
 
 def extract_conversation_context(
     transcript_path: Path, max_turns: int = 30, max_context_chars: int = 15_000
@@ -18,10 +28,12 @@ def extract_conversation_context(
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(entry, dict):
+                continue
 
             if entry.get("type") == "response_item":
-                message = entry.get("payload", {})
-                if message.get("type") != "message":
+                message = entry.get("payload")
+                if not isinstance(message, dict) or message.get("type") != "message":
                     continue
             else:
                 message = entry.get("message", entry)
@@ -32,12 +44,7 @@ def extract_conversation_context(
 
             content = message.get("content", "")
             if isinstance(content, list):
-                content = "\n".join(
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict)
-                    and block.get("type") in ("text", "input_text", "output_text")
-                )
+                content = "\n".join(_block_text(block) for block in content)
 
             if isinstance(content, str) and content.strip():
                 label = "User" if role == "user" else "Assistant"
